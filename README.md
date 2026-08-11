@@ -15,12 +15,12 @@ setup" below — this last part still needs to be set up manually).
 ```
 Intro (main.jpeg + background2 music, next)
   Fam_1   video CFL2_intro1 (auto-advance)
-  Fam_2   Intro_1.jpeg + Audio_1 narration, next
+  Fam_2   Intro_1.jpeg + Audio_1 narration, auto-advance when audio ends
   Fam_3   Intro_2.jpeg, drag the free apple along the gray bar, OK
   Fam_4   video CFL2_intro2 — duck misses the apple (auto-advance)
   Fam_5   Intro_2.jpeg, drag apple again, OK
   Fam_6   video CFL2_intro3 — duck catches the apple (auto-advance)
-  Fam_7   Intro_3.jpeg + Audio_2 narration, next
+  Fam_7   Intro_3.jpeg + Audio_2 narration, auto-advance when audio ends
   Fam_8   Intro_4.jpeg, drag apple, OK
   Fam_9   video CFL2_intro4 — duck misses (auto-advance)
   Fam_10  Intro_4.jpeg, drag apple, OK
@@ -69,21 +69,14 @@ URL query params for quick testing/reruns: `?pid=1&age=6&fn=1`.
 ## Assets — what's already here vs. still needed
 
 **Present** (`assets/`): `main.jpeg`, `Intro_1–4.jpeg`, `Training_bg.jpeg`,
-`Transition_bg.jpeg`, `next_button.png`, `ok_button.png`,
-`CFL2_intro1–5.mp4`, `Audio_1–7.mp3/m4a`, `Audio_11.mp3`, `background2.mp3`,
-`button_click.mp3`, `ok_button_click.mp3`.
+`Transition_bg.jpeg`, `next_button.png`, `ok_button.png`, `apple.png`,
+`ball.png`, `duck.png`, `CFL2_intro1–5.mp4`, `Audio_1–7.mp3/m4a`,
+`Audio_11.mp3`, `background2.mp3`, `button_click.mp3`, `ok_button_click.mp3`.
 
 **Still needed** — `index.html` references these exact filenames already
 (preload uses `continue_after_error: true` so the study still runs without
-them, just with a broken-image icon / silent audio until they're added):
+them, just with silent audio / an abruptly-ending video until they're added):
 
-- `assets/images/apple.png` — the free-draggable apple sprite (transparent
-  background), used in Fam_3/5/8/10.
-- `assets/images/ball.png` — the free ball sprite used in training/testing.
-- `assets/images/duck.png` — the free duck sprite (standing pose, transparent
-  background) used in training/testing. It's anchored by its bottom-center
-  (`.anchor-bottom` in `css/styles.css`), so leave margin below the feet out
-  of the image.
 - `assets/audio/Audio_8.mp3`, `Audio_9.mp3`, `Audio_10.mp3` — "before block
   2/3/4" narration ("Let's do this again!...", etc. — see task spec).
   Extension assumed `.mp3` to match the majority of existing `Audio_N` files;
@@ -91,10 +84,16 @@ them, just with a broken-image icon / silent audio until they're added):
   filenames in `index.html` to match.
 - `assets/videos/CFL2_end.mp4` — closing video.
 
-There's also an `assets/audio/CFL-12.m4a` already in the folder that doesn't
-match the `Audio_N` naming convention and isn't referenced anywhere in
-`index.html` — check whether it's meant to replace one of the files above
-before deleting it.
+There's also `assets/audio/CFL-12.m4a` and `assets/images/slingshot.png`
+already in the folder that aren't referenced anywhere in `index.html` (the
+gray bar is baked into the background art, not a separate sprite) — check
+whether either is meant to replace something above before deleting it.
+
+`duck.png` carries a red dashed arrow pointing down at the glove — that
+arrow tip, not the image's bounding box, is the point that lands on the bar
+/ ground line (`.anchor-duck-arrow` in `css/styles.css`, measured at 30.2%,
+87% of the 274×262 source art). Re-measure and update those two numbers if
+`duck.png` is ever replaced with different art.
 
 ## Coordinate calibration
 

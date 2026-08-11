@@ -236,9 +236,12 @@ function runExperiment(pid, age, fnNum) {
 
     // ================================================================
     // buildAudioGatedTrial(opts)
-    // Static background + one audio clip; next button hidden until the
-    // audio finishes (or a 15s fallback fires). Used for the narrated
-    // intro/transition/checkpoint screens.
+    // Static background + one audio clip. By default a next button stays
+    // hidden until the audio finishes (or a 15s fallback fires) and the
+    // child taps it to continue. Pass opts.autoAdvance = true to instead
+    // advance immediately once the audio ends, with no button shown at all
+    // (the button element still exists, hidden, so jsPsych has a response
+    // to advance on -- it's just auto-clicked instead of revealed).
     // ================================================================
     function buildAudioGatedTrial(opts) {
         return {
@@ -260,7 +263,10 @@ function runExperiment(pid, age, fnNum) {
                     revealed = true;
                     var btn = document.getElementById('gated-next-btn') ||
                               document.querySelector('.stage button');
-                    if (btn) {
+                    if (!btn) return;
+                    if (opts.autoAdvance) {
+                        btn.click();
+                    } else {
                         btn.style.display = 'inline-block';
                         btn.addEventListener('click', function() {
                             playAudio('assets/audio/button_click.mp3');
@@ -385,7 +391,7 @@ function runExperiment(pid, age, fnNum) {
             stimulus: stageHtml(TRAINING_BG,
                 '<img id="ball-sprite" class="drag-sprite is-locked" src="assets/images/ball.png" ' +
                     'style="left:' + ballStartX + '%; top:' + BAR_Y + '%; width:3%;">' +
-                '<img id="duck-sprite" class="drag-sprite anchor-bottom" src="assets/images/duck.png" ' +
+                '<img id="duck-sprite" class="drag-sprite anchor-duck-arrow" src="assets/images/duck.png" ' +
                     'style="left:' + DUCK_DEFAULT_X + '%; top:' + LINE_Y + '%; width:9%;">'),
             choices: ['OK'],
             button_html: function() {
@@ -475,16 +481,22 @@ function runExperiment(pid, age, fnNum) {
 
         return {
             type: jsPsychHtmlButtonResponse,
-            stimulus: (function() {
+            // NOTE: must be a plain function, evaluated lazily by jsPsych right
+            // before this trial displays -- NOT an IIFE. An IIFE here would run
+            // at timeline-build time (inside the training for-loop, before
+            // jsPsych.run() starts), when window._lastDuckResponsePct hasn't
+            // been set by any trial yet, so the duck would always render at
+            // the fallback position instead of the child's actual response.
+            stimulus: function() {
                 var duckPct = (typeof window._lastDuckResponsePct === 'number')
                               ? window._lastDuckResponsePct : 0;
                 var duckX = LINE_LEFT + (duckPct / 100) * (LINE_RIGHT - LINE_LEFT);
                 return stageHtml(TRAINING_BG,
                     '<img id="ball-sprite" class="drag-sprite is-locked" src="assets/images/ball.png" ' +
                         'style="left:' + ballStartX + '%; top:' + BAR_Y + '%; width:3%;">' +
-                    '<img id="duck-sprite" class="drag-sprite anchor-bottom is-locked" src="assets/images/duck.png" ' +
+                    '<img id="duck-sprite" class="drag-sprite anchor-duck-arrow is-locked" src="assets/images/duck.png" ' +
                         'style="left:' + duckX + '%; top:' + LINE_Y + '%; width:9%;">');
-            })(),
+            },
             choices: ['next'],
             button_html: function() {
                 return '<button id="landed-next-btn" class="jspsych-btn stage-btn" ' +
@@ -623,14 +635,16 @@ function runExperiment(pid, age, fnNum) {
     // ================================================================
     timeline.push(buildVideoTrial('assets/videos/CFL2_intro1.mp4', 'fam_1'));
     timeline.push(buildAudioGatedTrial({
-        background: 'assets/images/Intro_1.jpeg', audio: 'assets/audio/Audio_1.m4a', task: 'fam_2'
+        background: 'assets/images/Intro_1.jpeg', audio: 'assets/audio/Audio_1.m4a', task: 'fam_2',
+        autoAdvance: true
     }));
     timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_2.jpeg', task: 'fam_3' }));
     timeline.push(buildVideoTrial('assets/videos/CFL2_intro2.mp4', 'fam_4'));
     timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_2.jpeg', task: 'fam_5' }));
     timeline.push(buildVideoTrial('assets/videos/CFL2_intro3.mp4', 'fam_6'));
     timeline.push(buildAudioGatedTrial({
-        background: 'assets/images/Intro_3.jpeg', audio: 'assets/audio/Audio_2.m4a', task: 'fam_7'
+        background: 'assets/images/Intro_3.jpeg', audio: 'assets/audio/Audio_2.m4a', task: 'fam_7',
+        autoAdvance: true
     }));
     timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_4.jpeg', task: 'fam_8' }));
     timeline.push(buildVideoTrial('assets/videos/CFL2_intro4.mp4', 'fam_9'));
