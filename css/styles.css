@@ -1,0 +1,226 @@
+/* css/styles.css */
+
+/* Base */
+.jspsych-video-button-response-button-group,
+#jspsych-video-button-response-button-group {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: #dff0d8;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+html {
+    touch-action: manipulation;
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: auto;
+}
+
+.jspsych-display-element {
+    font-size: 20px;
+}
+
+/* Aspect-locked stage.
+   Every stimulus background + its overlays (ball, duck, apple) live inside
+   .stage so that percentage-positioned elements stay glued to features
+   painted on the background image regardless of viewport aspect ratio.
+   Background image aspect: 2112 x 1188 (16:9, LANDSCAPE) — this is the
+   dimension baseball_duck differs on from star_farm's portrait 2112x2833
+   stage. Videos share the same 16:9 aspect so they slot into the same stage. */
+.stage {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    aspect-ratio: 2112 / 1188;
+    width:  min(100dvw, calc(100dvh * 2112 / 1188));
+    height: min(100dvh, calc(100dvw * 1188 / 2112));
+    background: #dff0d8;
+    overflow: hidden;
+}
+.stage-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* Buttons that float inside the stage (next, OK). Sized with vmin so they
+   scale with the smaller viewport dimension; anchored to the stage corner. */
+/* ============================================================
+   NEXT / OK BUTTON STYLING
+   Used by every <button class="stage-btn"> in index.html.
+   - POSITION knobs:  see `bottom` / `right` below
+   - SIZE knob:       see `.stage-btn img { height: ... }` below
+   All hover / active / focus visual feedback is intentionally
+   suppressed so the button looks static (no color flash, no
+   scale on press, no halo). It is still clickable.
+   ============================================================ */
+button.stage-btn,
+button.stage-btn:hover,
+button.stage-btn:active,
+button.stage-btn:focus,
+button.stage-btn:focus-visible {
+    position: absolute;
+    bottom: 6%;   /* ← POSITION: distance from bottom of stage (bigger = higher) */
+    right:  4%;   /* ← POSITION: distance from right edge  (bigger = farther left) */
+    background: none !important;
+    background-color: transparent !important;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+    box-shadow: none;
+    outline: none;
+    cursor: default;
+    transform: none;
+    transition: none;
+    -webkit-appearance: none;
+    appearance: none;
+    -webkit-tap-highlight-color: transparent;
+}
+.stage-btn img {
+    height: 13vmin;       /* ← SIZE: main knob. Bigger number = bigger button. */
+    min-height: 60px;     /* ← SIZE floor (tiny screens) */
+    max-height: 130px;    /* ← SIZE ceiling (large monitors) */
+    display: block;
+    pointer-events: none; /* clicks pass through to the parent button */
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* Draggable sprites (apple / duck / ball). Positioned in % of .stage via
+   left/top set from JS; width in % of stage width keeps them scale-locked
+   to the background art the same way the background image itself scales. */
+.drag-sprite {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
+    pointer-events: auto;
+    z-index: 5;
+}
+.drag-sprite.is-locked {
+    pointer-events: none;
+}
+/* Round objects (apple, ball) rest with their center on the bar; the duck is
+   a standing character, so its feet (not its center) belong on the ground
+   line -- anchor it by the bottom-center of the sprite instead. */
+.drag-sprite.anchor-bottom {
+    transform: translate(-50%, -100%);
+}
+
+/* Full-screen intro slides: strip jsPsych's default container padding/max-width */
+.jspsych-content-wrapper.fullscreen-slide {
+    padding: 0 !important;
+}
+.jspsych-content-wrapper.fullscreen-slide .jspsych-content {
+    background: transparent;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+/* jsPsych button styling */
+.jspsych-btn {
+    font-family: inherit;
+    background-color: #2980b9;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 14px 36px;
+    font-size: 22px;
+    margin: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.jspsych-btn:hover {
+    background-color: #3498db;
+}
+
+.jspsych-btn:active {
+    background-color: #21618c;
+}
+
+/* Hide jsPsych progress bar */
+#jspsych-progressbar-container {
+    display: none;
+}
+
+/* Video trials: jsPsych's video-button-response plugin doesn't accept a stage
+   wrapper, so we letterbox the video element to the same aspect-locked area
+   as .stage. All study videos share the 16:9 aspect so they slot in cleanly. */
+#jspsych-video-button-response-stimulus {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    width:  min(100dvw, calc(100dvh * 2112 / 1188));
+    height: min(100dvh, calc(100dvw * 1188 / 2112));
+    background: #dff0d8;
+    display: block;
+}
+#jspsych-video-button-response-stimulus video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background: #dff0d8;
+}
+
+/* Startup-form inputs: 16px floor avoids iOS Safari auto-zoom on focus. */
+input, textarea, select {
+    -webkit-user-select: text;
+    user-select: text;
+    touch-action: manipulation;
+    font-size: 16px;
+}
+
+/* ============================================================
+   ORIENTATION LOCK
+   baseball_duck is designed for LANDSCAPE only (unlike star_farm, which is
+   portrait). If the device is held in portrait, cover the stage with a
+   rotate-device prompt instead of letting the aspect-ratio box squeeze down
+   to a sliver.
+   ============================================================ */
+#orientation-lock {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: #222;
+    color: white;
+    text-align: center;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 24px;
+    padding: 40px;
+    box-sizing: border-box;
+}
+@media (orientation: portrait) {
+    #orientation-lock { display: flex; }
+}
