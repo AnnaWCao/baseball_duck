@@ -17,28 +17,30 @@ Intro (main.jpeg + background2 music, next)
   Fam_1   video CFL2_intro1 (auto-advance)
   Fam_2   Intro_1.jpeg + Audio_1 narration, auto-advance when audio ends
   Fam_3   Intro_2.jpeg, drag the free apple along the gray bar, OK
-  Fam_4   video CFL2_intro2 — duck misses the apple (auto-advance)
-  Fam_5   Intro_2.jpeg, drag apple again, OK
-  Fam_6   video CFL2_intro3 — duck catches the apple (auto-advance)
+  Fam_4   video CFL2_intro2_3 — duck misses, then catches (auto-advance)
   Fam_7   Intro_3.jpeg + Audio_2 narration, auto-advance when audio ends
   Fam_8   Intro_4.jpeg, drag apple, OK
-  Fam_9   video CFL2_intro4 — duck misses (auto-advance)
-  Fam_10  Intro_4.jpeg, drag apple, OK
-  Fam_11  video CFL2_intro5 — duck catches (auto-advance)
+  Fam_9   video CFL2_intro4_5 — duck misses, then catches (auto-advance)
 Transition_1 (Transition_bg.jpeg + Audio_3, next)
-Training ×24 (4 blocks of 6, ascending sweeps — see config/functions.js):
+Training ×18 (3 blocks of 6, ascending sweeps — see config/functions.js):
   training_response  — ball appears on the slingshot bar at the trial's
                         input value; drag the duck along the ground line
                         to predict the landing spot; OK locks it in
   training_feedback   — ball rolls the length of the bar, then falls in a
                         half-parabola to the true landing spot; audio; next
-  (checkpoint audio after trial 6 / 12 / 18: "let's do this again...")
+  (checkpoint audio after trial 6: "let's do this again..."; after trial 12,
+   now the last block transition: "let's do this for the last time...")
 Transition_2 (Training_bg.jpeg + Audio_11, next)
 Testing ×9 (shuffled order, no feedback shown — same UI as training_response
   but the trial ends the instant OK is pressed; true landing spot is never
   revealed)
 End: video CFL2_end (auto-advance) → data save → "Session complete"
 ```
+
+Trial numbering (`fam_4`, `fam_7`, `fam_9`, …) intentionally has gaps —
+it's kept aligned with the original task-spec numbering rather than
+renumbered contiguously, so `fam_5`/`fam_6`/`fam_10`/`fam_11` (retry
+attempts folded into the combined miss+catch videos) are simply absent.
 
 ## Deploying to GitHub Pages
 
@@ -70,30 +72,29 @@ URL query params for quick testing/reruns: `?pid=1&age=6&fn=1`.
 
 **Present** (`assets/`): `main.jpeg`, `Intro_1–4.jpeg`, `Training_bg.jpeg`,
 `Transition_bg.jpeg`, `next_button.png`, `ok_button.png`, `apple.png`,
-`ball.png`, `duck.png`, `CFL2_intro1–5.mp4`, `Audio_1–7.mp3/m4a`,
+`ball.png`, `duck.png`, `CFL2_intro1.mp4`, `CFL2_intro2_3.mp4`,
+`CFL2_intro4_5.mp4`, `CFL2_end.mp4`, `Audio_1–8.mp3/m4a`, `Audio_10.m4a`,
 `Audio_11.mp3`, `background2.mp3`, `button_click.mp3`, `ok_button_click.mp3`.
+Everything the current timeline references is now present — nothing left
+to add for the flow described above.
 
-**Still needed** — `index.html` references these exact filenames already
-(preload uses `continue_after_error: true` so the study still runs without
-them, just with silent audio / an abruptly-ending video until they're added):
+`index.html` no longer references `CFL2_intro2.mp4`, `CFL2_intro3.mp4`,
+`CFL2_intro4.mp4`, `CFL2_intro5.mp4`, or `Audio_9.m4a` — they're superseded
+by the combined `CFL2_intro2_3.mp4` / `CFL2_intro4_5.mp4` clips and the
+3-block training schedule (see Study Flow above), but they're still in
+`assets/` in case you want them back. There's also `assets/audio/CFL-12.m4a`,
+`assets/images/slingshot.png`, `Intro_5–11.jpeg`, `Training_bg_fn3.jpeg`,
+`Transition_bg_fn3.jpeg`, `Transition_bg.jpg`, and `CFL2_intro6_7.mp4`/
+`CFL2_intro8_9.mp4`/`CFL2_intro10_11.mp4` sitting in `assets/` unreferenced
+by any trial — these look like material for a future extension of the
+familiarization sequence or per-function background variants, but nothing
+in the current task spec wires them up yet.
 
-- `assets/audio/Audio_8.mp3`, `Audio_9.mp3`, `Audio_10.mp3` — "before block
-  2/3/4" narration ("Let's do this again!...", etc. — see task spec).
-  Extension assumed `.mp3` to match the majority of existing `Audio_N` files;
-  if you add them as `.m4a` instead, update the `preload`/trial-builder
-  filenames in `index.html` to match.
-- `assets/videos/CFL2_end.mp4` — closing video.
-
-There's also `assets/audio/CFL-12.m4a` and `assets/images/slingshot.png`
-already in the folder that aren't referenced anywhere in `index.html` (the
-gray bar is baked into the background art, not a separate sprite) — check
-whether either is meant to replace something above before deleting it.
-
-`duck.png` carries a red dashed arrow pointing down at the glove — that
-arrow tip, not the image's bounding box, is the point that lands on the bar
-/ ground line (`.anchor-duck-arrow` in `css/styles.css`, measured at 30.2%,
-87% of the 274×262 source art). Re-measure and update those two numbers if
-`duck.png` is ever replaced with different art.
+`duck.png` carries a red dot-with-tail marker on the glove — the tip of
+that marker, not the image's bounding box, is the point that lands on the
+ground line (`.anchor-duck-arrow` in `css/styles.css`, measured at 32.5%,
+82.7% of the 291×231 source art). Re-measure and update those two numbers
+if `duck.png` is ever replaced with different art.
 
 ## Coordinate calibration
 
@@ -104,19 +105,30 @@ viewport. The constants live at the top of the `<script>` block in
 `index.html`:
 
 ```js
-const BAR_LEFT   = 1;   // left end of the gray slingshot bar
-const BAR_RIGHT  = 38;  // right end of the bar / fork cup (launch point)
-const BAR_Y      = 45;  // vertical center of the gray bar
-const LINE_LEFT  = 43;  // left end of the white ground line
-const LINE_RIGHT = 97;  // right end of the white ground line
-const LINE_Y     = 67;  // vertical position of the white ground line
+const BAR_LEFT     = 1;     // left end of the gray slingshot bar
+const BAR_RIGHT    = 38.5;  // right end of the bar / fork cup (launch point)
+const BAR_Y        = 44.7;  // vertical center of the gray bar
+const LINE_LEFT    = 38.9;  // left end of the white ground line (0% of duck/output scale)
+const LINE_RIGHT   = 92.9;  // right end of the white ground line (100% of duck/output scale)
+const LINE_Y       = 66.3;  // vertical center of the white ground line (duck drag height)
+const LINE_TOP_Y   = 64.9;  // top edge of the white ground line (ball lands resting ON TOP of it)
 ```
 
-These were measured by eye against `Intro_1/2.jpeg` and `Training_bg.jpeg`.
-If the art changes, or the apple/ball/duck sprites need finer alignment once
-they're dropped in, open the study, and nudge these numbers until the sprite
-centers (apple/ball) or feet (duck) line up with the bar/line in the
-background image.
+These were measured with a pixel-level scan of the actual PNG/JPEG art (scan
+for the gray/white pixel bounding box), not by eye — see the commit that
+introduced this recalibration for the one-off Python snippet. If the art
+moves again, re-run the same kind of scan rather than eyeballing it; the
+duck's drag range and the ball's landing spot are both driven directly off
+these numbers, so being off by a percent or two is visible.
+
+The ball is anchored by its own center (it's a plain circle), so its
+resting/rolling height on the bar is just `BAR_Y`. But for the landing spot
+at the end of training feedback, the ball should rest with its *bottom
+edge* on top of the ground line, not its center buried in it — `BALL_LANDING_Y`
+in `index.html` computes that offset from `BALL_WIDTH_PCT` (the ball
+sprite's width, which is also set inline as `width:3%`) and the stage's
+aspect ratio, so if you resize the ball sprite, update `BALL_WIDTH_PCT` to
+match rather than just the inline `width:`.
 
 ## Data Pipe / OSF setup (manual step)
 
@@ -155,7 +167,7 @@ locks the sprite in place when pressed.
 baseball_duck/
 ├── index.html                    # entry point: startup form + full timeline
 ├── config/
-│   └── functions.js              # function formulas + training/testing grid (from star_farm)
+│   └── functions.js              # same formulas as star_farm, trimmed to 3 training sweeps
 ├── trials/
 │   └── custom_plugins.js         # attachUnifiedInput() — mouse/touch/pen drag helper
 ├── css/
@@ -174,9 +186,10 @@ One row per trial. Columns of note:
 **Session-level** (same on every row): `subject_id`, `pid`, `age`,
 `function_number`.
 
-**Trial-level**: `task` (`intro`, `fam_1`…`fam_11`, `transition_1`,
-`training_response`, `training_feedback`, `before_block_2/3/4`,
-`transition_2`, `testing`, `end`), `input_value` (x, 0–100),
+**Trial-level**: `task` (`intro`, `fam_1`/`fam_2`/`fam_3`/`fam_4`/`fam_7`/
+`fam_8`/`fam_9`, `transition_1`, `training_response`, `training_feedback`,
+`before_block_2`, `before_block_3`, `transition_2`, `testing`, `end`),
+`input_value` (x, 0–100),
 `true_output` (y, 0–100, null on trials without one), `response_pct`
 (duck's predicted landing spot, 0–100), `apple_final_pct` (Fam trials only),
 `trial_index`, `canonical_index` (testing only — which item from

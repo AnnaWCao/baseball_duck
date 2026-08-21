@@ -41,15 +41,20 @@ const FUNCTION_BY_NUMBER = {
 // STAGE GEOMETRY
 // All values are % of the .stage box (which is itself locked to the
 // 2112x1188 background art's aspect ratio -- see css/styles.css).
-// Measured by inspecting assets/images/Intro_1.jpeg, Intro_2.jpeg,
-// Training_bg.jpeg, Transition_bg.jpeg. Recalibrate here if art changes.
+// Measured with a pixel-level scan of the actual art (find the gray/white
+// pixel bounding boxes), not by eye -- see the PR/commit notes for the
+// script. Recalibrate the same way if the art moves again.
 // ============================================================
-const BAR_LEFT   = 1;    // % — left end of the gray slingshot bar
-const BAR_RIGHT  = 38;   // % — right end of the bar / fork cup (apple & ball rest + launch point)
-const BAR_Y      = 45;   // % — vertical center of the gray bar
-const LINE_LEFT  = 43;   // % — left end of the white ground line
-const LINE_RIGHT = 97;   // % — right end of the white ground line
-const LINE_Y      = 67;  // % — vertical position of the white ground line
+const STAGE_ASPECT = 2112 / 1188; // stage width / height, for width%->height% conversions
+
+const BAR_LEFT   = 1;      // % — left end of the gray slingshot bar (Training_bg.jpeg)
+const BAR_RIGHT  = 38.5;   // % — right end of the bar / fork cup (apple & ball rest + launch point)
+const BAR_Y      = 44.7;   // % — vertical center of the gray bar
+
+const LINE_LEFT   = 38.9;  // % — left end of the white ground line (0% of duck/output scale)
+const LINE_RIGHT  = 92.9;  // % — right end of the white ground line (100% of duck/output scale)
+const LINE_Y       = 66.3; // % — vertical center of the white ground line (duck drag height)
+const LINE_TOP_Y   = 64.9; // % — top edge of the white ground line (ball rests on TOP of it)
 const DUCK_DEFAULT_X = (LINE_LEFT + LINE_RIGHT) / 2;
 
 // Apple's starting position on Intro_1 / Intro_3 (where it sits baked into
@@ -59,6 +64,15 @@ const APPLE_START_X = BAR_RIGHT;
 const APPLE_START_Y = BAR_Y;
 const APPLE_MIN_X   = 3;
 const APPLE_MAX_X   = BAR_RIGHT;
+
+// Ball sprite is rendered at BALL_WIDTH_PCT% of stage WIDTH (see the inline
+// width:3% on every <img id="ball-sprite">, kept in sync with this
+// constant). Because it's a square (88x88) image, its rendered height in %
+// of stage HEIGHT is larger by the stage's aspect ratio -- needed to land
+// the ball's bottom edge exactly on LINE_TOP_Y instead of its center.
+const BALL_WIDTH_PCT       = 3;
+const BALL_HEIGHT_PCT      = BALL_WIDTH_PCT * STAGE_ASPECT; // ball height, in % of stage height
+const BALL_LANDING_Y       = LINE_TOP_Y - BALL_HEIGHT_PCT / 2;
 
 // URL query params for quick testing: ?pid=1&age=6&fn=1
 document.body.insertAdjacentHTML('beforeend', `
@@ -520,7 +534,7 @@ function runExperiment(pid, age, fnNum) {
                         // Phase 2: half parabola down to the landing spot.
                         animate(700, function(t) {
                             ball.style.left = lerp(BAR_RIGHT, landingX, t) + '%';
-                            ball.style.top  = lerp(BAR_Y, LINE_Y, t * t) + '%';
+                            ball.style.top  = lerp(BAR_Y, BALL_LANDING_Y, t * t) + '%';
                         }, function() {
                             setTimeout(function() {
                                 var audio = playAudio(opts.landed_audio);
@@ -553,10 +567,9 @@ function runExperiment(pid, age, fnNum) {
 
     // ================================================================
     // PRELOAD
-    // Some files below (Audio_8/9/10, CFL2_end.mp4, apple/ball/duck sprites)
-    // are not in assets/ yet -- continue_after_error keeps the study
-    // running with a broken-image placeholder / silent audio until they're
-    // dropped in with these exact filenames.
+    // continue_after_error keeps the study running even if a filename below
+    // doesn't match what's actually in assets/ (broken-image placeholder /
+    // silent audio instead of a hard stop).
     // ================================================================
     var preload = {
         type: jsPsychPreload,
@@ -585,17 +598,16 @@ function runExperiment(pid, age, fnNum) {
             'assets/audio/Audio_5.m4a',
             'assets/audio/Audio_6.mp3',
             'assets/audio/Audio_7.mp3',
-            'assets/audio/Audio_8.mp3',
-            'assets/audio/Audio_9.mp3',
-            'assets/audio/Audio_10.mp3',
+            'assets/audio/Audio_8.m4a',
+            // Audio_9 intentionally not preloaded -- unused now that training
+            // is 3 blocks instead of 4, see the checkpoint comment below.
+            'assets/audio/Audio_10.m4a',
             'assets/audio/Audio_11.mp3'
         ],
         video: [
             'assets/videos/CFL2_intro1.mp4',
-            'assets/videos/CFL2_intro2.mp4',
-            'assets/videos/CFL2_intro3.mp4',
-            'assets/videos/CFL2_intro4.mp4',
-            'assets/videos/CFL2_intro5.mp4',
+            'assets/videos/CFL2_intro2_3.mp4',
+            'assets/videos/CFL2_intro4_5.mp4',
             'assets/videos/CFL2_end.mp4'
         ],
         show_progress_bar: true,
@@ -639,17 +651,18 @@ function runExperiment(pid, age, fnNum) {
         autoAdvance: true
     }));
     timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_2.jpeg', task: 'fam_3' }));
-    timeline.push(buildVideoTrial('assets/videos/CFL2_intro2.mp4', 'fam_4'));
-    timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_2.jpeg', task: 'fam_5' }));
-    timeline.push(buildVideoTrial('assets/videos/CFL2_intro3.mp4', 'fam_6'));
+    // Fam_4 replaces the old Fam_4/5/6 (miss video, second apple drag, catch
+    // video) with a single combined clip showing both outcomes; there's now
+    // only one apple-drag attempt per background instead of two.
+    timeline.push(buildVideoTrial('assets/videos/CFL2_intro2_3.mp4', 'fam_4'));
     timeline.push(buildAudioGatedTrial({
         background: 'assets/images/Intro_3.jpeg', audio: 'assets/audio/Audio_2.m4a', task: 'fam_7',
         autoAdvance: true
     }));
     timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_4.jpeg', task: 'fam_8' }));
-    timeline.push(buildVideoTrial('assets/videos/CFL2_intro4.mp4', 'fam_9'));
-    timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_4.jpeg', task: 'fam_10' }));
-    timeline.push(buildVideoTrial('assets/videos/CFL2_intro5.mp4', 'fam_11'));
+    // Fam_9 replaces the old Fam_9/10/11 (miss video, second apple drag,
+    // catch video) the same way.
+    timeline.push(buildVideoTrial('assets/videos/CFL2_intro4_5.mp4', 'fam_9'));
 
     timeline.push(buildAudioGatedTrial({
         background: 'assets/images/Transition_bg.jpeg', audio: 'assets/audio/Audio_3.mp3', task: 'transition_1'
@@ -680,18 +693,20 @@ function runExperiment(pid, age, fnNum) {
             landed_audio: isFirst ? 'assets/audio/Audio_5.m4a' : 'assets/audio/Audio_7.mp3'
         }));
 
-        // "Before block 2/3/4" checkpoints after the 6th/12th/18th training trial.
+        // "Before block 2/3" checkpoints after the 6th/12th training trial.
+        // Only 3 training blocks now (18 trials total, see config/functions.js),
+        // so there's no "before block 4" checkpoint. Audio_9 ("let's start over
+        // and do this one more time") was written for a middle transition that
+        // no longer exists -- skipped. The trial-12 checkpoint, now the LAST
+        // block transition, uses Audio_10 ("let's do this for the last time")
+        // instead, since that's the one that semantically fits.
         if (i + 1 === 6) {
             timeline.push(buildAudioGatedTrial({
-                background: TRAINING_BG, audio: 'assets/audio/Audio_8.mp3', task: 'before_block_2'
+                background: TRAINING_BG, audio: 'assets/audio/Audio_8.m4a', task: 'before_block_2'
             }));
         } else if (i + 1 === 12) {
             timeline.push(buildAudioGatedTrial({
-                background: TRAINING_BG, audio: 'assets/audio/Audio_9.mp3', task: 'before_block_3'
-            }));
-        } else if (i + 1 === 18) {
-            timeline.push(buildAudioGatedTrial({
-                background: TRAINING_BG, audio: 'assets/audio/Audio_10.mp3', task: 'before_block_4'
+                background: TRAINING_BG, audio: 'assets/audio/Audio_10.m4a', task: 'before_block_3'
             }));
         }
     }

@@ -124,14 +124,15 @@ button.stage-btn:focus-visible {
     pointer-events: none;
 }
 /* Round objects (apple, ball) rest with their center on the bar. The duck
-   sprite (assets/images/duck.png) instead carries a red dashed arrow
-   pointing down at its glove -- that arrow tip, not the sprite's bounding
-   box, is the functional point that should land on the gray bar / ground
-   line. Measured from the 274x262 source art: tip at (82.7, 228)px =
-   (30.2%, 87.0%) of the image. Re-measure and update these two numbers if
-   duck.png is ever replaced with different art. */
+   sprite (assets/images/duck.png) instead carries a red dot-with-tail
+   marker on its glove -- the tip of that marker, not the sprite's bounding
+   box, is the functional point that should land on the white ground line.
+   Measured (pixel scan for reddest pixels) from the 291x231 source art:
+   tip at (94.7, 191)px = (32.5%, 82.7%) of the image. Re-measure and
+   update these two numbers if duck.png is ever replaced with different
+   art. */
 .drag-sprite.anchor-duck-arrow {
-    transform: translate(-30.2%, -87%);
+    transform: translate(-32.5%, -82.7%);
 }
 
 /* Full-screen intro slides: strip jsPsych's default container padding/max-width */

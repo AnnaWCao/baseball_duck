@@ -1,14 +1,19 @@
 // ================================================================
 //  FUNCTION-LEARNING STIMULI  —  KIDS VERSION
-//  Copied unchanged from CFL1/star_farm/config/functions.js so both studies
-//  share the same input/output grid. Reinterpreted for baseball_duck as:
+//  Adapted from CFL1/star_farm/config/functions.js so both studies share
+//  the same input/output grid and formulas, but baseball_duck trims
+//  training to 3 upward sweeps (18 trials) instead of star_farm's 4 (24
+//  trials) -- one fewer training block, so index.html's block-break
+//  checkpoints only fire after trial 6 (before block 2) and trial 12
+//  (before block 3, now the LAST block).
+//  Reinterpreted for baseball_duck as:
 //    input  = % distance of the ball's start position from the RIGHT end
 //             of the gray slingshot bar (0 = at the fork, 100 = far left end).
 //    output = % distance from the LEFT end of the white ground line to
 //             where the ball lands / where the child should place the duck.
 //  Predictor range ~1-100.  Training region [25, 75].
 //  Training points (6): [25, 35, 45, 55, 65, 75]
-//  Presentation: 4 ascending passes (low->high) = 24 training trials per function.
+//  Presentation: 3 ascending passes (low->high) = 18 training trials per function.
 //  Testing (9): randomize presentation order per participant (do not use listed order).
 //  Outputs computed from exact inputs, rounded to 2 dp.
 // ================================================================
@@ -19,14 +24,12 @@ const FUNCTIONS = {
         name: "positive_linear",
         label: "Positive Linear",
         formula: "y = 0.8x + 10",
-        training: {  // 6 pts x 4 upward sweeps
-            inputs:  [25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
-                25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
-                25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
+        training: {  // 6 pts x 3 upward sweeps
+            inputs:  [25.00, 35.00, 45.00, 55.00, 65.00, 75.00,
+                25.00, 35.00, 45.00, 55.00, 65.00, 75.00,
                 25.00, 35.00, 45.00, 55.00, 65.00, 75.00],
-            outputs: [30.00, 38.00, 46.00, 54.00, 62.00, 70.00, 
-                30.00, 38.00, 46.00, 54.00, 62.00, 70.00, 
-                30.00, 38.00, 46.00, 54.00, 62.00, 70.00, 
+            outputs: [30.00, 38.00, 46.00, 54.00, 62.00, 70.00,
+                30.00, 38.00, 46.00, 54.00, 62.00, 70.00,
                 30.00, 38.00, 46.00, 54.00, 62.00, 70.00]
         },
         testing: {  // 9 pts; randomize order per participant
@@ -39,14 +42,12 @@ const FUNCTIONS = {
         name: "negative_linear",
         label: "Negative Linear",
         formula: "y = -0.8x + 90",
-        training: {  // 6 pts x 4 upward sweeps
-            inputs:  [25.00, 35.00, 45.00, 55.00, 65.00, 
-                75.00, 25.00, 35.00, 45.00, 55.00, 65.00, 
-                75.00, 25.00, 35.00, 45.00, 55.00, 65.00, 
-                75.00, 25.00, 35.00, 45.00, 55.00, 65.00, 75.00],
-            outputs: [70.00, 62.00, 54.00, 46.00, 38.00, 30.00, 
-                70.00, 62.00, 54.00, 46.00, 38.00, 30.00, 
-                70.00, 62.00, 54.00, 46.00, 38.00, 30.00, 
+        training: {  // 6 pts x 3 upward sweeps
+            inputs:  [25.00, 35.00, 45.00, 55.00, 65.00, 75.00,
+                25.00, 35.00, 45.00, 55.00, 65.00, 75.00,
+                25.00, 35.00, 45.00, 55.00, 65.00, 75.00],
+            outputs: [70.00, 62.00, 54.00, 46.00, 38.00, 30.00,
+                70.00, 62.00, 54.00, 46.00, 38.00, 30.00,
                 70.00, 62.00, 54.00, 46.00, 38.00, 30.00]
         },
         testing: {  // 9 pts; randomize order per participant
@@ -59,14 +60,12 @@ const FUNCTIONS = {
         name: "quadratic",
         label: "Quadratic (inverted U)",
         formula: "y = -0.036(x-50)^2 + 100",
-        training: {  // 6 pts x 4 upward sweeps
-            inputs:  [25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
-                25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
-                25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
+        training: {  // 6 pts x 3 upward sweeps
+            inputs:  [25.00, 35.00, 45.00, 55.00, 65.00, 75.00,
+                25.00, 35.00, 45.00, 55.00, 65.00, 75.00,
                 25.00, 35.00, 45.00, 55.00, 65.00, 75.00],
-            outputs: [77.50, 91.90, 99.10, 99.10, 91.90, 77.50, 
-                77.50, 91.90, 99.10, 99.10, 91.90, 77.50, 
-                77.50, 91.90, 99.10, 99.10, 91.90, 77.50, 
+            outputs: [77.50, 91.90, 99.10, 99.10, 91.90, 77.50,
+                77.50, 91.90, 99.10, 99.10, 91.90, 77.50,
                 77.50, 91.90, 99.10, 99.10, 91.90, 77.50]
         },
         testing: {  // 9 pts; randomize order per participant
@@ -79,14 +78,12 @@ const FUNCTIONS = {
         name: "exponential_growth",
         label: "Exponential Growth",
         formula: "y = 1.046^x + 10",
-        training: {  // 6 pts x 4 upward sweeps
-            inputs:  [25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
-                25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
-                25.00, 35.00, 45.00, 55.00, 65.00, 75.00, 
+        training: {  // 6 pts x 3 upward sweeps
+            inputs:  [25.00, 35.00, 45.00, 55.00, 65.00, 75.00,
+                25.00, 35.00, 45.00, 55.00, 65.00, 75.00,
                 25.00, 35.00, 45.00, 55.00, 65.00, 75.00],
-            outputs: [13.08, 14.83, 17.57, 21.86, 28.60, 39.17, 
-                13.08, 14.83, 17.57, 21.86, 28.60, 39.17, 
-                13.08, 14.83, 17.57, 21.86, 28.60, 39.17, 
+            outputs: [13.08, 14.83, 17.57, 21.86, 28.60, 39.17,
+                13.08, 14.83, 17.57, 21.86, 28.60, 39.17,
                 13.08, 14.83, 17.57, 21.86, 28.60, 39.17]
         },
         testing: {  // 9 pts; randomize order per participant
