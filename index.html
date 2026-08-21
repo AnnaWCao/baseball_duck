@@ -67,12 +67,19 @@ const APPLE_MAX_X   = BAR_RIGHT;
 
 // Ball sprite is rendered at BALL_WIDTH_PCT% of stage WIDTH (see the inline
 // width:3% on every <img id="ball-sprite">, kept in sync with this
-// constant). Because it's a square (88x88) image, its rendered height in %
-// of stage HEIGHT is larger by the stage's aspect ratio -- needed to land
-// the ball's bottom edge exactly on LINE_TOP_Y instead of its center.
-const BALL_WIDTH_PCT       = 3;
-const BALL_HEIGHT_PCT      = BALL_WIDTH_PCT * STAGE_ASPECT; // ball height, in % of stage height
-const BALL_LANDING_Y       = LINE_TOP_Y - BALL_HEIGHT_PCT / 2;
+// constant).
+const BALL_WIDTH_PCT  = 3;
+
+// >>> ADJUST THIS ONE NUMBER TO MOVE WHERE THE BALL LANDS VERTICALLY. <<<
+// This is the "top" (vertical center, since the ball is anchored by its own
+// center) the ball animates to at the end of training_feedback. Starting
+// estimate: LINE_TOP_Y minus half the ball's rendered height converted from
+// width% to height% via the stage's aspect ratio (a square image's
+// on-screen height, as a % of stage HEIGHT, is larger than its width%
+// because the stage is wider than it is tall). If the ball still doesn't
+// look like it's resting on the track, just change the number directly —
+// SMALLER = higher up (further from the bottom edge), LARGER = lower down.
+const BALL_LANDING_Y = LINE_TOP_Y - (BALL_WIDTH_PCT * STAGE_ASPECT) / 2;
 
 // URL query params for quick testing: ?pid=1&age=6&fn=1
 document.body.insertAdjacentHTML('beforeend', `

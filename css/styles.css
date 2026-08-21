@@ -123,6 +123,14 @@ button.stage-btn:focus-visible {
 .drag-sprite.is-locked {
     pointer-events: none;
 }
+/* The ball must always render in front of the duck when the two overlap
+   (landing on/near the duck's position) -- pin it to a higher stacking
+   context than the base .drag-sprite z-index instead of relying on DOM
+   order (ball-sprite happens to be written before duck-sprite in the
+   stimulus HTML, which would otherwise put it BEHIND the duck). */
+#ball-sprite {
+    z-index: 6;
+}
 /* Round objects (apple, ball) rest with their center on the bar. The duck
    sprite (assets/images/duck.png) instead carries a red dot-with-tail
    marker on its glove -- the tip of that marker, not the sprite's bounding
