@@ -79,7 +79,7 @@ const BALL_WIDTH_PCT  = 3;
 // because the stage is wider than it is tall). If the ball still doesn't
 // look like it's resting on the track, just change the number directly —
 // SMALLER = higher up (further from the bottom edge), LARGER = lower down.
-const BALL_LANDING_Y = LINE_TOP_Y - (BALL_WIDTH_PCT * STAGE_ASPECT) / 2;
+const BALL_LANDING_Y = LINE_TOP_Y - (BALL_WIDTH_PCT * STAGE_ASPECT) / 2 + 3.5;
 
 // URL query params for quick testing: ?pid=1&age=6&fn=1
 document.body.insertAdjacentHTML('beforeend', `
@@ -761,7 +761,7 @@ function runExperiment(pid, age, fnNum) {
     // are created at https://pipe.jspsych.org (this requires linking your own
     // OSF account -- it can't be done on your behalf). Until then, every
     // session still saves a local CSV backup via the browser download.
-    var PIPE_EXPERIMENT_ID = '';
+    var PIPE_EXPERIMENT_ID = '4fzLV6jNJmjL';
 
     if (PIPE_EXPERIMENT_ID) {
         timeline.push({
