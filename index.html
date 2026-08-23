@@ -1361,9 +1361,26 @@ function runExperiment(pid, age, fnNum) {
     // ---- Data save ----
     // Set PIPE_EXPERIMENT_ID once an OSF project + jsPsych DataPipe experiment
     // are created at https://pipe.jspsych.org (this requires linking your own
-    // OSF account -- it can't be done on your behalf). Until then, every
-    // session still saves a local CSV backup via the browser download.
+    // OSF account -- it can't be done on your behalf).
     var PIPE_EXPERIMENT_ID = '4fzLV6jNJmjL';
+
+    // Local CSV download is UNCONDITIONAL and happens FIRST, in its own
+    // near-instant trial (trial_duration ends it automatically -- no button,
+    // no dependency on anything after it). This used to be gated behind
+    // "only if no pipe ID is set", which meant a silent OSF upload failure
+    // (wrong/expired ID, DataPipe collection disabled, network hiccup) lost
+    // the session's data entirely with no local backup. Now every session
+    // gets a local file no matter what the OSF step below does.
+    timeline.push({
+        type: jsPsychHtmlButtonResponse,
+        stimulus: '<div style="padding:60px;text-align:center;font-size:28px;">Saving your data…</div>',
+        choices: [],
+        trial_duration: 50,
+        on_load: function() {
+            jsPsych.data.addProperties({ study_completion_timestamp: new Date().toISOString() });
+            downloadCSV(jsPsych.data.get().values(), filename);
+        }
+    });
 
     if (PIPE_EXPERIMENT_ID) {
         timeline.push({
@@ -1371,10 +1388,7 @@ function runExperiment(pid, age, fnNum) {
             action: 'save',
             experiment_id: PIPE_EXPERIMENT_ID,
             filename: filename,
-            data_string: () => {
-                jsPsych.data.addProperties({ study_completion_timestamp: new Date().toISOString() });
-                return jsPsych.data.get().csv();
-            }
+            data_string: () => jsPsych.data.get().csv()
         });
     }
 
@@ -1382,13 +1396,7 @@ function runExperiment(pid, age, fnNum) {
         type: jsPsychHtmlButtonResponse,
         stimulus: '<div style="padding:60px;text-align:center;font-size:32px;">' +
                   '✓ Session complete!<br><br>Data has been saved.</div>',
-        choices: ['Done'],
-        on_load: function() {
-            if (!PIPE_EXPERIMENT_ID) {
-                jsPsych.data.addProperties({ study_completion_timestamp: new Date().toISOString() });
-                downloadCSV(jsPsych.data.get().values(), filename);
-            }
-        }
+        choices: ['Done']
     });
 
 

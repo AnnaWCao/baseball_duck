@@ -168,8 +168,16 @@ match rather than just the inline `width:`.
 ## Data Pipe / OSF setup (manual step)
 
 `index.html` has a `PIPE_EXPERIMENT_ID` constant near the end of
-`runExperiment()`, currently empty — with it empty, the study **skips**
-the OSF upload and only does the local CSV download. To enable OSF saving:
+`runExperiment()`. The **local CSV download always happens**, regardless of
+whether this is set or whether the OSF upload succeeds — it's the very
+first thing that runs once the end video finishes, in its own instant
+trial, so a network hiccup or a misconfigured DataPipe experiment can never
+lose a session's data outright. (Earlier versions gated the local download
+behind "only if no pipe ID is set," which meant a silent OSF failure lost
+the data with no backup — fixed.) The OSF upload is a second, independent
+step after that.
+
+To enable/troubleshoot OSF saving:
 
 1. Go to https://pipe.jspsych.org/ and follow their setup — this links
    *your own* OSF account and creates a DataPipe experiment tied to an OSF
@@ -178,9 +186,15 @@ the OSF upload and only does the local CSV download. To enable OSF saving:
 2. Create (or reuse) an OSF project for this study's data.
 3. Paste the resulting experiment ID into `PIPE_EXPERIMENT_ID` in
    `index.html`.
+4. If a session completes but nothing shows up in the OSF project's data
+   component, check on the DataPipe dashboard: the experiment's **"Enable
+   data collection"** toggle must be on, the OSF Project ID must still be
+   linked, and the experiment ID in `index.html` must match exactly
+   (DataPipe fails the upload silently from the participant's point of view
+   if any of these are off — the local CSV is what saves you in that case).
 
-Until then, every session still saves a CSV locally via the browser's
-download — verify the file before closing the tab.
+Every session still saves a CSV locally via the browser's download —
+verify the file before closing the tab.
 
 ## Input Compatibility
 
