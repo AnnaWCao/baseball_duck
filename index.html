@@ -81,6 +81,142 @@ const BALL_WIDTH_PCT  = 3;
 // SMALLER = higher up (further from the bottom edge), LARGER = lower down.
 const BALL_LANDING_Y = LINE_TOP_Y - (BALL_WIDTH_PCT * STAGE_ASPECT) / 2 + 3.5;
 
+// ============================================================
+// CFL2-QUADRATIC (function 3) GEOMETRY
+// Function 3 replaces the straight sliding bar with a slingshot that
+// ROTATES around a fixed pivot (its "lower right corner"), sweeping from
+// horizontal (0deg, pointing left/west) to vertical (90deg, pointing
+// straight down/south) through the lower-left arc drawn (dotted) in
+// Intro_5/7/8/9/10/11 and Training_bg_fn3.jpeg. All measured the same way
+// as the constants above: pixel-scan the art, fit a circle to the dotted
+// arc for the pivot + radius, and locate the apple/bar's own bounding box
+// for its rotation anchor. See training_bg_fn3/Intro_5.jpeg if re-measuring.
+//
+// Angle convention used everywhere below: 0 = bar points left (horizontal),
+// 90 = bar points straight down. A point at angle A, distance R from a
+// pivot (Px,Py) is at (Px - R*cos(A), Py + R*sin(A)). Because the stage
+// isn't square, this trig has to run in actual on-screen PIXELS (via
+// getBoundingClientRect()) and get converted back to % afterward --
+// doing it directly in % would draw an ellipse instead of a circle.
+// ============================================================
+const SLING_MIN_ANGLE = 0;
+const SLING_MAX_ANGLE = 90;
+
+// -- Familiarization (Fam_3/7/10): apple_slingshot.png, draggable by the child --
+const FN3_FAM_PIVOT_X = 37.1;  // % — pivot (fork), Intro_5/6/7/8/9/10/11 share this layout
+const FN3_FAM_PIVOT_Y = 44.8;  // %
+const FN3_FAM_RADIUS  = 12.4;  // % of stage width — pivot-to-apple distance at rest
+
+// apple_slingshot.png is a 414x124 canvas; its bar's lower-right corner
+// (measured at (381,67)px) is the rotation anchor, as a % of the image's
+// OWN box -- used as both transform-origin and the translate that pins
+// that point to FN3_FAM_PIVOT_X/Y regardless of rendered size (see
+// buildRotatingDragTrial).
+const APPLE_SLING_ANCHOR_X  = 92.0;  // %
+const APPLE_SLING_ANCHOR_Y  = 54.0;  // %
+const APPLE_SLING_WIDTH_PCT = 15.9;  // rendered width, % of stage width (tuned so the anchor-to-apple distance equals FN3_FAM_RADIUS)
+
+// Starting angles matching where apple_slingshot sits baked into
+// Intro_5 / Intro_8 / Intro_10 respectively (measured from the apple's
+// pixel position relative to the pivot above).
+const FAM3_START_ANGLE  = 0;
+const FAM7_START_ANGLE  = 19;
+const FAM10_START_ANGLE = 43;
+
+// -- Training/testing (Training_bg_fn3.jpeg): separate ball + slingshot elements,
+//    NOT draggable -- their angle is set directly from the trial's input value.
+//    Only the duck is interactive (reuses LINE_LEFT/RIGHT/Y/TOP_Y above, which
+//    measured identically on Training_bg_fn3.jpeg as on Training_bg.jpeg).
+const FN3_PIVOT_X = 38.6;  // %
+const FN3_PIVOT_Y = 43.2;  // %
+const FN3_RADIUS  = 14.0;  // % of stage width
+
+// slingshot.png (plain bar, no apple) is a 370x113 canvas; its bar's
+// lower-right corner (measured at (335,74)px) is the rotation anchor.
+const SLINGSHOT_ANCHOR_X  = 90.5; // %
+const SLINGSHOT_ANCHOR_Y  = 65.5; // %
+const SLINGSHOT_WIDTH_PCT = 17.4; // tuned so its radius equals FN3_RADIUS
+
+// >>> ADJUST THIS TO CHANGE HOW HIGH THE BALL LOFTS. <<<
+// Purely cosmetic (true_output always fixes the final landing X) -- how far
+// ABOVE the pivot's height the ball rises mid-flight at a 90deg launch.
+// Scales down to 0 as angle -> 0 (a flat shot never rises, same half-parabola
+// as the original mechanic); scales up to this full value as angle -> 90.
+const FN3_MAX_RISE_PCT = 18;
+
+// input (0-100, from config/functions.js) -> launch angle (0-90deg).
+// Simplest reading of "translate input into a percentage then into an
+// angle": percentage = input/100, angle = percentage * 90. Since function 3
+// (quadratic) is already symmetric/inverted-U shaped in its outputs, this
+// linear map alone reproduces the "short at low angle, far near 45deg,
+// short-but-high near 90deg" story described in the task spec -- the
+// physical realism is in the ANIMATION shape (see buildFn3LandingFeedbackTrial),
+// not in re-deriving true_output from the angle (true_output always comes
+// straight from functions.js, unchanged).
+function inputToAngle(inputValue) {
+    return (inputValue / 100) * 90;
+}
+
+// Computes the .stage box's on-screen rect WITHOUT touching the DOM, by
+// replicating its CSS sizing formula (width: min(100dvw, 100dvh*ASPECT);
+// height: min(100dvh, 100dvw/ASPECT); centered via inset:0 + margin:auto).
+// arcPoint() needs this from inside a trial's `stimulus` function, which
+// jsPsych calls to build the HTML string BEFORE inserting it into the page
+// -- at that point .stage doesn't exist in the DOM yet, so
+// document.querySelector('.stage').getBoundingClientRect() would throw.
+// Computing it from the viewport instead works in every context.
+function stageRectFromWindow() {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var width  = Math.min(vw, vh * STAGE_ASPECT);
+    var height = width / STAGE_ASPECT;
+    return { left: (vw - width) / 2, top: (vh - height) / 2, width: width, height: height };
+}
+
+// Computes where a point at `angleDeg` and `radiusPct` (of stage WIDTH) from
+// a pivot (in % of stage) actually lands, in real pixels first (so the
+// stage's non-square aspect ratio doesn't warp the circle into an ellipse),
+// then converted back to %.
+function arcPoint(pivotXPct, pivotYPct, radiusPct, angleDeg) {
+    var rect = stageRectFromWindow();
+    var pivotXPx = (pivotXPct / 100) * rect.width;
+    var pivotYPx = (pivotYPct / 100) * rect.height;
+    var radiusPx = (radiusPct / 100) * rect.width;
+    var rad = (angleDeg * Math.PI) / 180;
+    var xPx = pivotXPx - radiusPx * Math.cos(rad);
+    var yPx = pivotYPx + radiusPx * Math.sin(rad);
+    return { xPct: (xPx / rect.width) * 100, yPct: (yPx / rect.height) * 100 };
+}
+
+// Inverse of arcPoint: given a pointer's client (viewport) position, returns
+// the angle (deg, clamped to [SLING_MIN_ANGLE, SLING_MAX_ANGLE]) from the
+// pivot to that position. Used while dragging apple_slingshot.
+function angleFromClientPoint(pivotXPct, pivotYPct, clientX, clientY) {
+    var rect = stageRectFromWindow();
+    var pivotScreenX = rect.left + (pivotXPct / 100) * rect.width;
+    var pivotScreenY = rect.top  + (pivotYPct / 100) * rect.height;
+    var dx = clientX - pivotScreenX;
+    var dy = clientY - pivotScreenY;
+    var angleDeg = (Math.atan2(dy, -dx) * 180) / Math.PI;
+    return Math.max(SLING_MIN_ANGLE, Math.min(SLING_MAX_ANGLE, angleDeg));
+}
+
+// Renders a rotating sprite (apple_slingshot.png or slingshot.png) pinned by
+// its own ANCHOR point (a % of the image's own box, e.g. its lower-right bar
+// corner) to a fixed PIVOT point on the stage, at ANGLE degrees. Uses a
+// zero-size wrapper positioned at the pivot so the img's translate+rotate
+// transform can be expressed entirely in the image's own %-based units --
+// no per-frame pixel math needed for rendering (only angleFromClientPoint,
+// while actively dragging, needs real pixels).
+function rotatingSpriteHtml(opts) {
+    return '<div class="pivot-anchor" style="position:absolute; left:' + opts.pivotX + '%; top:' + opts.pivotY + '%; width:0; height:0;">' +
+        '<img id="' + opts.id + '" class="' + (opts.extraClass || '') + '" src="' + opts.src + '" ' +
+            'style="position:absolute; left:0; top:0; width:' + opts.widthPct + '%; ' +
+            'transform-origin:' + opts.anchorX + '% ' + opts.anchorY + '%; ' +
+            'transform: translate(-' + opts.anchorX + '%, -' + opts.anchorY + '%) rotate(' + (-opts.angleDeg) + 'deg); ' +
+            'touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; -webkit-user-drag:none;">' +
+        '</div>';
+}
+
 // URL query params for quick testing: ?pid=1&age=6&fn=1
 document.body.insertAdjacentHTML('beforeend', `
     <div id="startup-form" style="max-width:min(900px, 92vw); margin:80px auto; padding:48px;
@@ -573,12 +709,350 @@ function runExperiment(pid, age, fnNum) {
 
 
     // ================================================================
+    // buildRotatingDragTrial(opts)
+    // Function-3 (quadratic) familiarization trials (Fam_3/7/10): apple_slingshot
+    // is a free sprite pinned to FN3_FAM_PIVOT_X/Y by its own lower-right bar
+    // corner (APPLE_SLING_ANCHOR_X/Y) and rotated by dragging, instead of the
+    // original mechanic's straight-line slide. Same OK-appears-after-first-
+    // drag / lock-on-click pattern as buildAppleDragTrial.
+    // ================================================================
+    function buildRotatingDragTrial(opts) {
+        return {
+            type: jsPsychHtmlButtonResponse,
+            stimulus: stageHtml(opts.background, rotatingSpriteHtml({
+                id: 'sling-sprite', src: 'assets/images/apple_slingshot.png',
+                pivotX: FN3_FAM_PIVOT_X, pivotY: FN3_FAM_PIVOT_Y,
+                anchorX: APPLE_SLING_ANCHOR_X, anchorY: APPLE_SLING_ANCHOR_Y,
+                widthPct: APPLE_SLING_WIDTH_PCT, angleDeg: opts.startAngle,
+                extraClass: 'drag-sprite'
+            })),
+            choices: ['OK'],
+            button_html: function() {
+                return '<button id="ok-btn" class="jspsych-btn stage-btn" ' +
+                       'style="display:none;"><img src="assets/images/ok_button.png"></button>';
+            },
+            data: { task: opts.task },
+            on_load: function() {
+                anchorBtnGroupInStage();
+                var sprite = document.getElementById('sling-sprite');
+                var okBtn  = document.getElementById('ok-btn');
+
+                var hasInteracted = false;
+                var currentAngle  = opts.startAngle;
+                var firstMoveTs   = null;
+                var startTs       = performance.now();
+
+                function updateAngle(clientX, clientY) {
+                    var angle = angleFromClientPoint(FN3_FAM_PIVOT_X, FN3_FAM_PIVOT_Y, clientX, clientY);
+                    currentAngle = angle;
+                    sprite.style.transform = 'translate(-' + APPLE_SLING_ANCHOR_X + '%, -' +
+                        APPLE_SLING_ANCHOR_Y + '%) rotate(' + (-angle) + 'deg)';
+                    if (!hasInteracted) {
+                        hasInteracted = true;
+                        firstMoveTs = performance.now() - startTs;
+                        okBtn.style.display = 'inline-block';
+                    }
+                }
+
+                var dragHandlers = attachUnifiedInput(sprite, {
+                    down: function(e) { e.preventDefault(); updateAngle(e.clientX, e.clientY); },
+                    move: function(e) { e.preventDefault(); updateAngle(e.clientX, e.clientY); },
+                    up:   function() {}
+                });
+
+                okBtn.addEventListener('click', function() {
+                    stopAllAudio();
+                    playAudio('assets/audio/ok_button_click.mp3');
+                    sprite.classList.add('is-locked');
+                    dragHandlers.destroy();
+                });
+
+                window._slingTrialData = {
+                    finalAngle:  function() { return currentAngle; },
+                    interacted:  function() { return hasInteracted; },
+                    firstMoveMs: function() { return firstMoveTs ? Math.round(firstMoveTs) : null; }
+                };
+            },
+            on_finish: function(data) {
+                stopAllAudio();
+                if (window._slingTrialData) {
+                    data.apple_final_angle_deg = window._slingTrialData.finalAngle();
+                    data.interacted            = window._slingTrialData.interacted();
+                    data.first_move_rt_ms      = window._slingTrialData.firstMoveMs();
+                    window._slingTrialData     = null;
+                }
+            }
+        };
+    }
+
+    // ================================================================
+    // buildFn3PlacementTrial(opts)
+    // Function-3 training/testing placement half: ball+slingshot are STATIC
+    // this trial, rendered at the angle inputToAngle(opts.input_value) gives
+    // (the child does not rotate them -- only the duck is interactive, via
+    // the exact same drag mechanic and LINE_LEFT/RIGHT/Y constants as
+    // buildPlacementTrial). Kept as its own function rather than folded into
+    // buildPlacementTrial to avoid touching the working original mechanic.
+    // ================================================================
+    function buildFn3PlacementTrial(opts) {
+        var angle = inputToAngle(opts.input_value);
+
+        return {
+            type: jsPsychHtmlButtonResponse,
+            stimulus: function() {
+                var ballPos = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle);
+                return stageHtml(TRAINING_BG_FN3,
+                    rotatingSpriteHtml({
+                        id: 'fn3-sling-sprite', src: 'assets/images/slingshot.png',
+                        pivotX: FN3_PIVOT_X, pivotY: FN3_PIVOT_Y,
+                        anchorX: SLINGSHOT_ANCHOR_X, anchorY: SLINGSHOT_ANCHOR_Y,
+                        widthPct: SLINGSHOT_WIDTH_PCT, angleDeg: angle
+                    }) +
+                    '<img id="ball-sprite" class="drag-sprite is-locked" src="assets/images/ball.png" ' +
+                        'style="left:' + ballPos.xPct + '%; top:' + ballPos.yPct + '%; width:' + BALL_WIDTH_PCT + '%;">' +
+                    '<img id="duck-sprite" class="drag-sprite anchor-duck-arrow" src="assets/images/duck.png" ' +
+                        'style="left:' + DUCK_DEFAULT_X + '%; top:' + LINE_Y + '%; width:9%;">'
+                );
+            },
+            choices: ['OK'],
+            button_html: function() {
+                return '<button id="ok-btn" class="jspsych-btn stage-btn" ' +
+                       'style="display:none;"><img src="assets/images/ok_button.png"></button>';
+            },
+            data: {
+                task:            opts.task,
+                input_value:     opts.input_value,
+                true_output:     opts.true_output !== undefined ? opts.true_output : null,
+                trial_index:     opts.trial_index,
+                canonical_index: opts.canonical_index !== undefined ? opts.canonical_index : null
+            },
+            on_load: function() {
+                anchorBtnGroupInStage();
+                var duck  = document.getElementById('duck-sprite');
+                var okBtn = document.getElementById('ok-btn');
+
+                var hasInteracted = false;
+                var currentXPct   = DUCK_DEFAULT_X;
+                var firstMoveTs   = null;
+                var startTs       = performance.now();
+
+                function updatePosition(clientX) {
+                    var stage = document.querySelector('.stage');
+                    var rect  = stage.getBoundingClientRect();
+                    var xPct  = ((clientX - rect.left) / rect.width) * 100;
+                    xPct = Math.max(LINE_LEFT, Math.min(LINE_RIGHT, xPct));
+                    currentXPct = xPct;
+                    duck.style.left = xPct + '%';
+                    if (!hasInteracted) {
+                        hasInteracted = true;
+                        firstMoveTs = performance.now() - startTs;
+                        okBtn.style.display = 'inline-block';
+                    }
+                }
+
+                var dragHandlers = attachUnifiedInput(duck, {
+                    down: function(e) { e.preventDefault(); updatePosition(e.clientX); },
+                    move: function(e) { e.preventDefault(); updatePosition(e.clientX); },
+                    up:   function() {}
+                });
+
+                setTimeout(function() { playAudio(opts.place_audio); }, 700);
+
+                okBtn.addEventListener('click', function() {
+                    playAudio('assets/audio/ok_button_click.mp3');
+                    duck.classList.add('is-locked');
+                    dragHandlers.destroy();
+                });
+
+                window._placementTrialData = {
+                    finalPct:    function() { return currentXPct; },
+                    interacted:  function() { return hasInteracted; },
+                    firstMoveMs: function() { return firstMoveTs ? Math.round(firstMoveTs) : null; }
+                };
+            },
+            on_finish: function(data) {
+                stopAllAudio();
+                if (window._placementTrialData) {
+                    var responsePct = ((window._placementTrialData.finalPct() - LINE_LEFT) /
+                                        (LINE_RIGHT - LINE_LEFT)) * 100;
+                    data.response_pct     = responsePct;
+                    data.interacted       = window._placementTrialData.interacted();
+                    data.first_move_rt_ms = window._placementTrialData.firstMoveMs();
+                    window._placementTrialData = null;
+                    window._lastDuckResponsePct = responsePct;
+                }
+            }
+        };
+    }
+
+    // ================================================================
+    // buildFn3LandingFeedbackTrial(opts)
+    // Function-3 training feedback: ball rolls inward along the CURRENT bar
+    // angle to the pivot (release point), then flies to true_output. Unlike
+    // the original mechanic's fixed half-parabola, the flight has a rise
+    // phase that scales with sin(angle) -- 0 at angle=0 (reduces to exactly
+    // the original half-parabola fall), maximal near angle=90 (high, narrow
+    // lob) -- purely a visual shape; the landing X always comes straight
+    // from true_output, never from simulating angle-based range.
+    // ================================================================
+    function buildFn3LandingFeedbackTrial(opts) {
+        var angle     = inputToAngle(opts.input_value);
+        var landingX  = LINE_LEFT + (opts.true_output / 100) * (LINE_RIGHT - LINE_LEFT);
+
+        return {
+            type: jsPsychHtmlButtonResponse,
+            stimulus: function() {
+                var ballStart = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle);
+                var duckPct = (typeof window._lastDuckResponsePct === 'number')
+                              ? window._lastDuckResponsePct : 0;
+                var duckX = LINE_LEFT + (duckPct / 100) * (LINE_RIGHT - LINE_LEFT);
+                return stageHtml(TRAINING_BG_FN3,
+                    rotatingSpriteHtml({
+                        id: 'fn3-sling-sprite', src: 'assets/images/slingshot.png',
+                        pivotX: FN3_PIVOT_X, pivotY: FN3_PIVOT_Y,
+                        anchorX: SLINGSHOT_ANCHOR_X, anchorY: SLINGSHOT_ANCHOR_Y,
+                        widthPct: SLINGSHOT_WIDTH_PCT, angleDeg: angle
+                    }) +
+                    '<img id="ball-sprite" class="drag-sprite is-locked" src="assets/images/ball.png" ' +
+                        'style="left:' + ballStart.xPct + '%; top:' + ballStart.yPct + '%; width:' + BALL_WIDTH_PCT + '%;">' +
+                    '<img id="duck-sprite" class="drag-sprite anchor-duck-arrow is-locked" src="assets/images/duck.png" ' +
+                        'style="left:' + duckX + '%; top:' + LINE_Y + '%; width:9%;">'
+                );
+            },
+            choices: ['next'],
+            button_html: function() {
+                return '<button id="landed-next-btn" class="jspsych-btn stage-btn" ' +
+                       'style="display:none;"><img src="assets/images/next_button.png"></button>';
+            },
+            data: {
+                task:        'training_feedback',
+                input_value: opts.input_value,
+                true_output: opts.true_output,
+                trial_index: opts.trial_index
+            },
+            on_load: function() {
+                anchorBtnGroupInStage();
+                var ball      = document.getElementById('ball-sprite');
+                var ballStart = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle);
+
+                function revealNext() {
+                    setTimeout(function() {
+                        var audio = playAudio(opts.landed_audio);
+                        window._lastDuckResponsePct = null;
+
+                        var revealed = false;
+                        function revealBtn() {
+                            if (revealed) return;
+                            revealed = true;
+                            var btn = document.getElementById('landed-next-btn');
+                            if (btn) {
+                                btn.style.display = 'inline-block';
+                                btn.addEventListener('click', function() {
+                                    playAudio('assets/audio/button_click.mp3');
+                                });
+                            }
+                        }
+                        audio.addEventListener('ended', revealBtn);
+                        audio.addEventListener('error', revealBtn);
+                        setTimeout(revealBtn, 15000);
+                    }, 300);
+                }
+
+                setTimeout(function() {
+                    // Phase 0: roll inward along the bar to the pivot/release point.
+                    animate(500, function(t) {
+                        ball.style.left = lerp(ballStart.xPct, FN3_PIVOT_X, t) + '%';
+                        ball.style.top  = lerp(ballStart.yPct, FN3_PIVOT_Y, t) + '%';
+                    }, function() {
+                        var angleRad     = (angle * Math.PI) / 180;
+                        var riseAmount   = FN3_MAX_RISE_PCT * Math.sin(angleRad);
+                        var riseDuration = Math.round(600 * (riseAmount / FN3_MAX_RISE_PCT));
+                        var fallDuration = 700;
+                        var totalDuration = riseDuration + fallDuration;
+                        var midX  = lerp(FN3_PIVOT_X, landingX, riseDuration / totalDuration);
+                        var peakY = FN3_PIVOT_Y - riseAmount;
+
+                        function fall() {
+                            animate(fallDuration, function(t) {
+                                ball.style.left = lerp(midX, landingX, t) + '%';
+                                ball.style.top  = lerp(peakY, BALL_LANDING_Y, t * t) + '%';
+                            }, revealNext);
+                        }
+
+                        if (riseDuration > 0) {
+                            // Phase 1: rise (ease-out -- decelerating, like gravity slowing an ascent).
+                            animate(riseDuration, function(t) {
+                                ball.style.left = lerp(FN3_PIVOT_X, midX, t) + '%';
+                                ball.style.top  = lerp(FN3_PIVOT_Y, peakY, t * (2 - t)) + '%';
+                            }, fall);
+                        } else {
+                            // angle ~= 0: no rise, identical to the original half-parabola.
+                            fall();
+                        }
+                    });
+                }, 400);
+            },
+            on_finish: function() { stopAllAudio(); }
+        };
+    }
+
+
+    // ================================================================
     // PRELOAD
     // continue_after_error keeps the study running even if a filename below
     // doesn't match what's actually in assets/ (broken-image placeholder /
     // silent audio instead of a hard stop).
     // ================================================================
-    var preload = {
+    // Function 3 (quadratic) uses a completely different asset set for
+    // familiarization/training/testing (see the fnNum===3 branch below) --
+    // only preload the set that's actually needed for this session.
+    var preload = (fnNum === 3) ? {
+        type: jsPsychPreload,
+        images: [
+            'assets/images/main.jpeg',
+            'assets/images/Intro_5.jpeg',
+            'assets/images/Intro_6.jpeg',
+            'assets/images/Intro_7.jpeg',
+            'assets/images/Intro_8.jpeg',
+            'assets/images/Intro_9.jpeg',
+            'assets/images/Intro_10.jpeg',
+            'assets/images/Intro_11.jpeg',
+            'assets/images/Training_bg_fn3.jpeg',
+            'assets/images/Transition_bg_fn3.jpeg',
+            'assets/images/next_button.png',
+            'assets/images/ok_button.png',
+            'assets/images/apple_slingshot.png',
+            'assets/images/slingshot.png',
+            'assets/images/ball.png',
+            'assets/images/duck.png'
+        ],
+        audio: [
+            'assets/audio/background2.mp3',
+            'assets/audio/button_click.mp3',
+            'assets/audio/ok_button_click.mp3',
+            'assets/audio/Audio_1.m4a',
+            'assets/audio/Audio_3.m4a',
+            'assets/audio/Audio_7.mp3',
+            'assets/audio/Audio_11.mp3',
+            'assets/audio/Audio_12.m4a',
+            'assets/audio/Audio_13.m4a',
+            'assets/audio/Audio_14.m4a',
+            'assets/audio/Audio_15.m4a',
+            'assets/audio/Audio_16.m4a',
+            'assets/audio/Audio_17.m4a',
+            'assets/audio/Audio_18.m4a'
+        ],
+        video: [
+            'assets/videos/CFL2_intro1.mp4',
+            'assets/videos/CFL2_intro6_7.mp4',
+            'assets/videos/CFL2_intro8_9.mp4',
+            'assets/videos/CFL2_intro10_11.mp4',
+            'assets/videos/CFL2_end.mp4'
+        ],
+        show_progress_bar: true,
+        message: 'Getting the field ready...',
+        continue_after_error: true
+    } : {
         type: jsPsychPreload,
         images: [
             'assets/images/main.jpeg',
@@ -600,8 +1074,8 @@ function runExperiment(pid, age, fnNum) {
             'assets/audio/ok_button_click.mp3',
             'assets/audio/Audio_1.m4a',
             'assets/audio/Audio_2.m4a',
-            'assets/audio/Audio_3.mp3',
-            'assets/audio/Audio_4.mp3',
+            'assets/audio/Audio_3.m4a',
+            'assets/audio/Audio_4.m4a',
             'assets/audio/Audio_5.m4a',
             'assets/audio/Audio_6.mp3',
             'assets/audio/Audio_7.mp3',
@@ -649,105 +1123,210 @@ function runExperiment(pid, age, fnNum) {
     timeline.push(intro);
 
 
-    // ================================================================
-    // FAMILIARIZATION PHASE (apple-catching story)
-    // ================================================================
-    timeline.push(buildVideoTrial('assets/videos/CFL2_intro1.mp4', 'fam_1'));
-    timeline.push(buildAudioGatedTrial({
-        background: 'assets/images/Intro_1.jpeg', audio: 'assets/audio/Audio_1.m4a', task: 'fam_2',
-        autoAdvance: true
-    }));
-    timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_2.jpeg', task: 'fam_3' }));
-    // Fam_4 replaces the old Fam_4/5/6 (miss video, second apple drag, catch
-    // video) with a single combined clip showing both outcomes; there's now
-    // only one apple-drag attempt per background instead of two.
-    timeline.push(buildVideoTrial('assets/videos/CFL2_intro2_3.mp4', 'fam_4'));
-    timeline.push(buildAudioGatedTrial({
-        background: 'assets/images/Intro_3.jpeg', audio: 'assets/audio/Audio_2.m4a', task: 'fam_7',
-        autoAdvance: true
-    }));
-    timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_4.jpeg', task: 'fam_8' }));
-    // Fam_9 replaces the old Fam_9/10/11 (miss video, second apple drag,
-    // catch video) the same way.
-    timeline.push(buildVideoTrial('assets/videos/CFL2_intro4_5.mp4', 'fam_9'));
-
-    timeline.push(buildAudioGatedTrial({
-        background: 'assets/images/Transition_bg.jpeg', audio: 'assets/audio/Audio_3.mp3', task: 'transition_1'
-    }));
-
-
-    // ================================================================
-    // TRAINING PHASE
-    // ================================================================
-    var TRAINING_BG = 'assets/images/Training_bg.jpeg';
-
     var FN = FUNCTIONS[fnNum];
     if (!FN) { console.error('No function definition for fnNum=' + fnNum); return; }
 
-    for (var i = 0; i < FN.training.inputs.length; i++) {
-        var isFirst = (i === 0);
-        timeline.push(buildPlacementTrial({
-            input_value: FN.training.inputs[i],
-            true_output: FN.training.outputs[i],
-            trial_index: i + 1,
-            task:        'training_response',
-            place_audio: isFirst ? 'assets/audio/Audio_4.mp3' : 'assets/audio/Audio_6.mp3'
+    // Function 3 (quadratic) uses an entirely different familiarization /
+    // training / testing story -- a rotating slingshot instead of a sliding
+    // one -- while intro, ending, and data-save stay identical either way
+    // (see below). Functions 1/2/4 keep the original apple-catching flow.
+    if (fnNum === 3) {
+
+        // ============================================================
+        // CFL2-QUADRATIC FAMILIARIZATION PHASE (rotating slingshot story)
+        // ============================================================
+        var TRAINING_BG_FN3 = 'assets/images/Training_bg_fn3.jpeg';
+
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro1.mp4', 'fam_1'));
+        timeline.push(buildAudioGatedTrial({
+            background: 'assets/images/Intro_5.jpeg', audio: 'assets/audio/Audio_1.m4a', task: 'fam_2',
+            autoAdvance: true
         }));
-        timeline.push(buildLandingFeedbackTrial({
-            input_value:  FN.training.inputs[i],
-            true_output:  FN.training.outputs[i],
-            trial_index:  i + 1,
-            landed_audio: isFirst ? 'assets/audio/Audio_5.m4a' : 'assets/audio/Audio_7.mp3'
+        timeline.push(buildRotatingDragTrial({
+            background: 'assets/images/Intro_6.jpeg', task: 'fam_3', startAngle: FAM3_START_ANGLE
+        }));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro6_7.mp4', 'fam_4'));
+        timeline.push(buildAudioGatedTrial({
+            background: 'assets/images/Intro_7.jpeg', audio: 'assets/audio/Audio_12.m4a', task: 'fam_5'
+        }));
+        timeline.push(buildAudioGatedTrial({
+            background: 'assets/images/Intro_8.jpeg', audio: 'assets/audio/Audio_13.m4a', task: 'fam_6'
+        }));
+        timeline.push(buildRotatingDragTrial({
+            background: 'assets/images/Intro_9.jpeg', task: 'fam_7', startAngle: FAM7_START_ANGLE
+        }));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro8_9.mp4', 'fam_8'));
+        timeline.push(buildAudioGatedTrial({
+            background: 'assets/images/Intro_10.jpeg', audio: 'assets/audio/Audio_13.m4a', task: 'fam_9'
+        }));
+        timeline.push(buildRotatingDragTrial({
+            background: 'assets/images/Intro_11.jpeg', task: 'fam_10', startAngle: FAM10_START_ANGLE
+        }));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro10_11.mp4', 'fam_11'));
+
+        timeline.push(buildAudioGatedTrial({
+            background: 'assets/images/Transition_bg_fn3.jpeg', audio: 'assets/audio/Audio_3.m4a', task: 'transition_1'
         }));
 
-        // "Before block 2/3" checkpoints after the 6th/12th training trial.
-        // Only 3 training blocks now (18 trials total, see config/functions.js),
-        // so there's no "before block 4" checkpoint. Audio_9 ("let's start over
-        // and do this one more time") was written for a middle transition that
-        // no longer exists -- skipped. The trial-12 checkpoint, now the LAST
-        // block transition, uses Audio_10 ("let's do this for the last time")
-        // instead, since that's the one that semantically fits.
-        if (i + 1 === 6) {
-            timeline.push(buildAudioGatedTrial({
-                background: TRAINING_BG, audio: 'assets/audio/Audio_8.m4a', task: 'before_block_2'
+
+        // ============================================================
+        // CFL2-QUADRATIC TRAINING PHASE
+        // ============================================================
+        for (var i3 = 0; i3 < FN.training.inputs.length; i3++) {
+            var isFirst3 = (i3 === 0);
+            timeline.push(buildFn3PlacementTrial({
+                input_value: FN.training.inputs[i3],
+                true_output: FN.training.outputs[i3],
+                trial_index: i3 + 1,
+                task:        'training_response',
+                place_audio: isFirst3 ? 'assets/audio/Audio_14.m4a' : 'assets/audio/Audio_18.m4a'
             }));
-        } else if (i + 1 === 12) {
-            timeline.push(buildAudioGatedTrial({
-                background: TRAINING_BG, audio: 'assets/audio/Audio_10.m4a', task: 'before_block_3'
+            timeline.push(buildFn3LandingFeedbackTrial({
+                input_value:  FN.training.inputs[i3],
+                true_output:  FN.training.outputs[i3],
+                trial_index:  i3 + 1,
+                landed_audio: isFirst3 ? 'assets/audio/Audio_15.m4a' : 'assets/audio/Audio_7.mp3'
+            }));
+
+            // Same 3-block schedule as the original flow (see the comment
+            // there for why there's no "before block 4"), with fn3's own
+            // checkpoint narration.
+            if (i3 + 1 === 6) {
+                timeline.push(buildAudioGatedTrial({
+                    background: TRAINING_BG_FN3, audio: 'assets/audio/Audio_16.m4a', task: 'before_block_2'
+                }));
+            } else if (i3 + 1 === 12) {
+                timeline.push(buildAudioGatedTrial({
+                    background: TRAINING_BG_FN3, audio: 'assets/audio/Audio_17.m4a', task: 'before_block_3'
+                }));
+            }
+        }
+
+
+        // ============================================================
+        // CFL2-QUADRATIC TESTING PHASE
+        // ============================================================
+        timeline.push(buildAudioGatedTrial({
+            background: TRAINING_BG_FN3, audio: 'assets/audio/Audio_11.mp3', task: 'transition_2'
+        }));
+
+        var testIndices3 = FN.testing.inputs.map(function(_, i) { return i; });
+        for (var k3 = testIndices3.length - 1; k3 > 0; k3--) {
+            var r3 = Math.floor(Math.random() * (k3 + 1));
+            var tmp3 = testIndices3[k3]; testIndices3[k3] = testIndices3[r3]; testIndices3[r3] = tmp3;
+        }
+
+        for (var j3 = 0; j3 < testIndices3.length; j3++) {
+            var ci3 = testIndices3[j3];
+            timeline.push(buildFn3PlacementTrial({
+                input_value:     FN.testing.inputs[ci3],
+                true_output:     FN.testing.outputs[ci3],
+                trial_index:     j3 + 1,
+                canonical_index: ci3 + 1,
+                task:            'testing',
+                place_audio:     'assets/audio/Audio_18.m4a'
             }));
         }
-    }
 
+    } else {
 
-    // ================================================================
-    // TESTING PHASE
-    // ================================================================
-    timeline.push(buildAudioGatedTrial({
-        background: TRAINING_BG, audio: 'assets/audio/Audio_11.mp3', task: 'transition_2'
-    }));
+        // ============================================================
+        // FAMILIARIZATION PHASE (apple-catching story) -- functions 1/2/4
+        // ============================================================
+        var TRAINING_BG = 'assets/images/Training_bg.jpeg';
 
-    // Shuffle test trial order — Fisher-Yates, fresh random permutation per participant.
-    // canonical_index records which item from functions.js was shown (1-based),
-    // trial_index records the presentation position (1-based).
-    var testIndices = FN.testing.inputs.map(function(_, i) { return i; });
-    for (var k = testIndices.length - 1; k > 0; k--) {
-        var r = Math.floor(Math.random() * (k + 1));
-        var tmp = testIndices[k]; testIndices[k] = testIndices[r]; testIndices[r] = tmp;
-    }
-
-    for (var j = 0; j < testIndices.length; j++) {
-        var ci = testIndices[j];
-        // Testing trials use the same placement UI as training's response half,
-        // but there is no companion feedback trial: OK locks the duck and the
-        // trial ends immediately with no ball flight and no reveal of true_output.
-        timeline.push(buildPlacementTrial({
-            input_value:     FN.testing.inputs[ci],
-            true_output:     FN.testing.outputs[ci],
-            trial_index:     j + 1,
-            canonical_index: ci + 1,
-            task:            'testing',
-            place_audio:     'assets/audio/Audio_6.mp3'
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro1.mp4', 'fam_1'));
+        timeline.push(buildAudioGatedTrial({
+            background: 'assets/images/Intro_1.jpeg', audio: 'assets/audio/Audio_1.m4a', task: 'fam_2',
+            autoAdvance: true
         }));
+        timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_2.jpeg', task: 'fam_3' }));
+        // Fam_4 replaces the old Fam_4/5/6 (miss video, second apple drag, catch
+        // video) with a single combined clip showing both outcomes; there's now
+        // only one apple-drag attempt per background instead of two.
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro2_3.mp4', 'fam_4'));
+        timeline.push(buildAudioGatedTrial({
+            background: 'assets/images/Intro_3.jpeg', audio: 'assets/audio/Audio_2.m4a', task: 'fam_7',
+            autoAdvance: true
+        }));
+        timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_4.jpeg', task: 'fam_8' }));
+        // Fam_9 replaces the old Fam_9/10/11 (miss video, second apple drag,
+        // catch video) the same way.
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro4_5.mp4', 'fam_9'));
+
+        timeline.push(buildAudioGatedTrial({
+            background: 'assets/images/Transition_bg.jpeg', audio: 'assets/audio/Audio_3.m4a', task: 'transition_1'
+        }));
+
+
+        // ============================================================
+        // TRAINING PHASE
+        // ============================================================
+        for (var i = 0; i < FN.training.inputs.length; i++) {
+            var isFirst = (i === 0);
+            timeline.push(buildPlacementTrial({
+                input_value: FN.training.inputs[i],
+                true_output: FN.training.outputs[i],
+                trial_index: i + 1,
+                task:        'training_response',
+                place_audio: isFirst ? 'assets/audio/Audio_4.m4a' : 'assets/audio/Audio_6.mp3'
+            }));
+            timeline.push(buildLandingFeedbackTrial({
+                input_value:  FN.training.inputs[i],
+                true_output:  FN.training.outputs[i],
+                trial_index:  i + 1,
+                landed_audio: isFirst ? 'assets/audio/Audio_5.m4a' : 'assets/audio/Audio_7.mp3'
+            }));
+
+            // "Before block 2/3" checkpoints after the 6th/12th training trial.
+            // Only 3 training blocks now (18 trials total, see config/functions.js),
+            // so there's no "before block 4" checkpoint. Audio_9 ("let's start over
+            // and do this one more time") was written for a middle transition that
+            // no longer exists -- skipped. The trial-12 checkpoint, now the LAST
+            // block transition, uses Audio_10 ("let's do this for the last time")
+            // instead, since that's the one that semantically fits.
+            if (i + 1 === 6) {
+                timeline.push(buildAudioGatedTrial({
+                    background: TRAINING_BG, audio: 'assets/audio/Audio_8.m4a', task: 'before_block_2'
+                }));
+            } else if (i + 1 === 12) {
+                timeline.push(buildAudioGatedTrial({
+                    background: TRAINING_BG, audio: 'assets/audio/Audio_10.m4a', task: 'before_block_3'
+                }));
+            }
+        }
+
+
+        // ============================================================
+        // TESTING PHASE
+        // ============================================================
+        timeline.push(buildAudioGatedTrial({
+            background: TRAINING_BG, audio: 'assets/audio/Audio_11.mp3', task: 'transition_2'
+        }));
+
+        // Shuffle test trial order — Fisher-Yates, fresh random permutation per participant.
+        // canonical_index records which item from functions.js was shown (1-based),
+        // trial_index records the presentation position (1-based).
+        var testIndices = FN.testing.inputs.map(function(_, i) { return i; });
+        for (var k = testIndices.length - 1; k > 0; k--) {
+            var r = Math.floor(Math.random() * (k + 1));
+            var tmp = testIndices[k]; testIndices[k] = testIndices[r]; testIndices[r] = tmp;
+        }
+
+        for (var j = 0; j < testIndices.length; j++) {
+            var ci = testIndices[j];
+            // Testing trials use the same placement UI as training's response half,
+            // but there is no companion feedback trial: OK locks the duck and the
+            // trial ends immediately with no ball flight and no reveal of true_output.
+            timeline.push(buildPlacementTrial({
+                input_value:     FN.testing.inputs[ci],
+                true_output:     FN.testing.outputs[ci],
+                trial_index:     j + 1,
+                canonical_index: ci + 1,
+                task:            'testing',
+                place_audio:     'assets/audio/Audio_6.mp3'
+            }));
+        }
     }
 
 

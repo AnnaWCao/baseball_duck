@@ -42,6 +42,44 @@ it's kept aligned with the original task-spec numbering rather than
 renumbered contiguously, so `fam_5`/`fam_6`/`fam_10`/`fam_11` (retry
 attempts folded into the combined miss+catch videos) are simply absent.
 
+### Function 3 (quadratic) uses a different flow entirely
+
+Selecting **Function 3** on the startup form switches `index.html` to a
+completely separate familiarization/training/testing story — a slingshot
+that **rotates** around a fixed pivot (0° = horizontal, 90° = straight down)
+instead of a ball sliding along a straight bar. Intro, the closing video,
+and the data-save step are shared code, unchanged, regardless of function.
+
+```
+Intro (shared)
+  Fam_1   video CFL2_intro1 (auto-advance, shared)
+  Fam_2   Intro_5.jpeg + Audio_1, auto-advance
+  Fam_3   Intro_6.jpeg, rotate the free apple_slingshot, OK
+  Fam_4   video CFL2_intro6_7 (auto-advance)
+  Fam_5   Intro_7.jpeg + Audio_12, next
+  Fam_6   Intro_8.jpeg + Audio_13, next
+  Fam_7   Intro_9.jpeg, rotate apple_slingshot (starts ~19°), OK
+  Fam_8   video CFL2_intro8_9 (auto-advance)
+  Fam_9   Intro_10.jpeg + Audio_13, next
+  Fam_10  Intro_11.jpeg, rotate apple_slingshot (starts ~43°), OK
+  Fam_11  video CFL2_intro10_11 (auto-advance)
+Transition_1 (Transition_bg_fn3.jpeg + Audio_3, next)
+Training ×18 / Testing ×9 (same 3-block schedule as functions 1/2/4):
+  ball + slingshot are STATIC each trial, angle = inputToAngle(input_value)
+  = (input/100)*90 -- only the duck is draggable, identical mechanic/
+  LINE_LEFT/RIGHT/Y constants as the original flow.
+  Feedback: ball rolls inward to the pivot, then flies to true_output with
+  a rise that scales with sin(angle) -- flat near 0°, high/narrow near 90°.
+  Checkpoints use Audio_16 (before block 2) / Audio_17 (before block 3).
+End (shared) → data save (shared)
+```
+
+All the rotation geometry (pivot points, radii, sprite anchor points, the
+apple's three starting angles) was measured the same way as the
+BAR_LEFT/LINE_LEFT constants below — see the "CFL2-QUADRATIC (function 3)
+GEOMETRY" comment block near the top of `index.html`'s `<script>` for the
+exact constants and how to re-measure them if the art changes.
+
 ## Deploying to GitHub Pages
 
 1. Create a new GitHub repository (e.g., `baseball-duck-study`).
@@ -70,25 +108,22 @@ URL query params for quick testing/reruns: `?pid=1&age=6&fn=1`.
 
 ## Assets — what's already here vs. still needed
 
-**Present** (`assets/`): `main.jpeg`, `Intro_1–4.jpeg`, `Training_bg.jpeg`,
-`Transition_bg.jpeg`, `next_button.png`, `ok_button.png`, `apple.png`,
-`ball.png`, `duck.png`, `CFL2_intro1.mp4`, `CFL2_intro2_3.mp4`,
-`CFL2_intro4_5.mp4`, `CFL2_end.mp4`, `Audio_1–8.mp3/m4a`, `Audio_10.m4a`,
-`Audio_11.mp3`, `background2.mp3`, `button_click.mp3`, `ok_button_click.mp3`.
-Everything the current timeline references is now present — nothing left
-to add for the flow described above.
+Everything referenced by `index.html` (functions 1/2/4 AND function 3) is
+present in `assets/`. Function-3-only images: `Intro_5–11.jpeg`,
+`Training_bg_fn3.jpeg`, `Transition_bg_fn3.jpeg`, `apple_slingshot.png`,
+`slingshot.png`. Function-3-only audio: `Audio_12–18` (all `.m4a`).
+Function-3-only video: `CFL2_intro6_7.mp4`, `CFL2_intro8_9.mp4`,
+`CFL2_intro10_11.mp4`. Everything else is shared with (or exclusive to)
+functions 1/2/4 as laid out in the two Study Flow sections above.
 
 `index.html` no longer references `CFL2_intro2.mp4`, `CFL2_intro3.mp4`,
 `CFL2_intro4.mp4`, `CFL2_intro5.mp4`, or `Audio_9.m4a` — they're superseded
 by the combined `CFL2_intro2_3.mp4` / `CFL2_intro4_5.mp4` clips and the
 3-block training schedule (see Study Flow above), but they're still in
-`assets/` in case you want them back. There's also `assets/audio/CFL-12.m4a`,
-`assets/images/slingshot.png`, `Intro_5–11.jpeg`, `Training_bg_fn3.jpeg`,
-`Transition_bg_fn3.jpeg`, `Transition_bg.jpg`, and `CFL2_intro6_7.mp4`/
-`CFL2_intro8_9.mp4`/`CFL2_intro10_11.mp4` sitting in `assets/` unreferenced
-by any trial — these look like material for a future extension of the
-familiarization sequence or per-function background variants, but nothing
-in the current task spec wires them up yet.
+`assets/` in case you want them back. There's also `assets/audio/CFL-12.m4a`
+and `assets/images/Transition_bg.jpg` sitting in `assets/` unreferenced by
+any trial — check whether either is meant to replace something before
+deleting it.
 
 `duck.png` carries a red dot-with-tail marker on the glove — the tip of
 that marker, not the image's bounding box, is the point that lands on the
@@ -186,15 +221,19 @@ One row per trial. Columns of note:
 **Session-level** (same on every row): `subject_id`, `pid`, `age`,
 `function_number`.
 
-**Trial-level**: `task` (`intro`, `fam_1`/`fam_2`/`fam_3`/`fam_4`/`fam_7`/
-`fam_8`/`fam_9`, `transition_1`, `training_response`, `training_feedback`,
+**Trial-level**: `task` (`intro`, `fam_1` through `fam_11` — with gaps, see
+above, `transition_1`, `training_response`, `training_feedback`,
 `before_block_2`, `before_block_3`, `transition_2`, `testing`, `end`),
-`input_value` (x, 0–100),
-`true_output` (y, 0–100, null on trials without one), `response_pct`
-(duck's predicted landing spot, 0–100), `apple_final_pct` (Fam trials only),
-`trial_index`, `canonical_index` (testing only — which item from
-`functions.js` was shown, before shuffling), `interacted`,
-`first_move_rt_ms`.
+`input_value` (x, 0–100), `true_output` (y, 0–100, null on trials without
+one), `response_pct` (duck's predicted landing spot, 0–100), `trial_index`,
+`canonical_index` (testing only — which item from `functions.js` was shown,
+before shuffling), `interacted`, `first_move_rt_ms`.
+
+Fam drag trials additionally record how the free sprite was left: functions
+1/2/4 (`buildAppleDragTrial`) record `apple_final_pct` (0–100 position along
+the bar); function 3 (`buildRotatingDragTrial`) records
+`apple_final_angle_deg` (0–90, degrees from horizontal) instead, since the
+sprite there rotates rather than slides.
 
 Filter on `task == 'training_response'` or `task == 'testing'` for the
 child's predictions; `task == 'training_feedback'` rows carry the same
