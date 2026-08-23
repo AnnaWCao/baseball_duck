@@ -103,8 +103,8 @@ const SLING_MIN_ANGLE = 0;
 const SLING_MAX_ANGLE = 90;
 
 // -- Familiarization (Fam_3/7/10): apple_slingshot.png, draggable by the child --
-const FN3_FAM_PIVOT_X = 37.1;  // % — pivot (fork), Intro_5/6/7/8/9/10/11 share this layout
-const FN3_FAM_PIVOT_Y = 44.8;  // %
+const FN3_FAM_PIVOT_X = 38.8;  // % — pivot (fork), Intro_5/6/7/8/9/10/11 share this layout
+const FN3_FAM_PIVOT_Y = 42.8;  // %
 const FN3_FAM_RADIUS  = 12.4;  // % of stage width — pivot-to-apple distance at rest
 
 // apple_slingshot.png is a 414x124 canvas; its bar's lower-right corner
@@ -114,7 +114,7 @@ const FN3_FAM_RADIUS  = 12.4;  // % of stage width — pivot-to-apple distance a
 // buildRotatingDragTrial).
 const APPLE_SLING_ANCHOR_X  = 92.0;  // %
 const APPLE_SLING_ANCHOR_Y  = 54.0;  // %
-const APPLE_SLING_WIDTH_PCT = 15.9;  // rendered width, % of stage width (tuned so the anchor-to-apple distance equals FN3_FAM_RADIUS)
+const APPLE_SLING_WIDTH_PCT = 19;  // rendered width, % of stage width (tuned so the anchor-to-apple distance equals FN3_FAM_RADIUS)
 
 // Starting angles matching where apple_slingshot sits baked into
 // Intro_5 / Intro_8 / Intro_10 respectively (measured from the apple's
@@ -136,6 +136,18 @@ const FN3_RADIUS  = 14.0;  // % of stage width
 const SLINGSHOT_ANCHOR_X  = 90.5; // %
 const SLINGSHOT_ANCHOR_Y  = 65.5; // %
 const SLINGSHOT_WIDTH_PCT = 17.4; // tuned so its radius equals FN3_RADIUS
+
+// >>> ADJUST THIS TO ALIGN THE BALL WITH THE GRAY BAR. <<<
+// slingshot.png's rotation anchor (335,74) sits slightly below the bar's
+// true centerline at the tip (38,65) -- a pure single-radius point (what
+// FN3_RADIUS alone gives you) therefore lands a hair off the bar. This is
+// the perpendicular-to-the-bar correction (same "% of stage width" unit as
+// FN3_RADIUS), applied in the bar's own rotating frame via arcPoint() so it
+// stays correct at every angle, not just one. Starting estimate derived
+// from slingshot.png's own pixel measurements: (Δy/|Δx|)*FN3_RADIUS =
+// (-9/297)*14.0. NEGATIVE moves the ball toward the bar from below (up, at
+// angle=0); POSITIVE moves it further away (down, at angle=0).
+const FN3_BALL_PERP_OFFSET = -0.42;
 
 // >>> ADJUST THIS TO CHANGE HOW HIGH THE BALL LOFTS. <<<
 // Purely cosmetic (true_output always fixes the final landing X) -- how far
@@ -175,15 +187,23 @@ function stageRectFromWindow() {
 // Computes where a point at `angleDeg` and `radiusPct` (of stage WIDTH) from
 // a pivot (in % of stage) actually lands, in real pixels first (so the
 // stage's non-square aspect ratio doesn't warp the circle into an ellipse),
-// then converted back to %.
-function arcPoint(pivotXPct, pivotYPct, radiusPct, angleDeg) {
+// then converted back to %. `perpOffsetPct` (same unit as radiusPct) shifts
+// the point PERPENDICULAR to the pivot->point line, in the bar's own
+// rotating frame -- i.e. the offset direction turns together with angleDeg,
+// so a correction that's right at one angle stays right at every angle.
+// Needed because slingshot.png's rotation anchor (its bottom-right corner)
+// isn't exactly on the bar's centerline, so a pure single-radius point sits
+// slightly off the bar; see FN3_BALL_PERP_OFFSET.
+function arcPoint(pivotXPct, pivotYPct, radiusPct, angleDeg, perpOffsetPct) {
+    perpOffsetPct = perpOffsetPct || 0;
     var rect = stageRectFromWindow();
     var pivotXPx = (pivotXPct / 100) * rect.width;
     var pivotYPx = (pivotYPct / 100) * rect.height;
     var radiusPx = (radiusPct / 100) * rect.width;
+    var perpPx   = (perpOffsetPct / 100) * rect.width;
     var rad = (angleDeg * Math.PI) / 180;
-    var xPx = pivotXPx - radiusPx * Math.cos(rad);
-    var yPx = pivotYPx + radiusPx * Math.sin(rad);
+    var xPx = pivotXPx - radiusPx * Math.cos(rad) + perpPx * Math.sin(rad);
+    var yPx = pivotYPx + radiusPx * Math.sin(rad) + perpPx * Math.cos(rad);
     return { xPct: (xPx / rect.width) * 100, yPct: (yPx / rect.height) * 100 };
 }
 
@@ -803,7 +823,7 @@ function runExperiment(pid, age, fnNum) {
         return {
             type: jsPsychHtmlButtonResponse,
             stimulus: function() {
-                var ballPos = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle);
+                var ballPos = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle, FN3_BALL_PERP_OFFSET);
                 return stageHtml(TRAINING_BG_FN3,
                     rotatingSpriteHtml({
                         id: 'fn3-sling-sprite', src: 'assets/images/slingshot.png',
@@ -905,7 +925,7 @@ function runExperiment(pid, age, fnNum) {
         return {
             type: jsPsychHtmlButtonResponse,
             stimulus: function() {
-                var ballStart = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle);
+                var ballStart = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle, FN3_BALL_PERP_OFFSET);
                 var duckPct = (typeof window._lastDuckResponsePct === 'number')
                               ? window._lastDuckResponsePct : 0;
                 var duckX = LINE_LEFT + (duckPct / 100) * (LINE_RIGHT - LINE_LEFT);
@@ -936,7 +956,7 @@ function runExperiment(pid, age, fnNum) {
             on_load: function() {
                 anchorBtnGroupInStage();
                 var ball      = document.getElementById('ball-sprite');
-                var ballStart = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle);
+                var ballStart = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle, FN3_BALL_PERP_OFFSET);
 
                 function revealNext() {
                     setTimeout(function() {
