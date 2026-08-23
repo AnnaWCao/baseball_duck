@@ -202,13 +202,16 @@ function angleFromClientPoint(pivotXPct, pivotYPct, clientX, clientY) {
 
 // Renders a rotating sprite (apple_slingshot.png or slingshot.png) pinned by
 // its own ANCHOR point (a % of the image's own box, e.g. its lower-right bar
-// corner) to a fixed PIVOT point on the stage, at ANGLE degrees. Uses a
-// zero-size wrapper positioned at the pivot so the img's translate+rotate
-// transform can be expressed entirely in the image's own %-based units --
-// no per-frame pixel math needed for rendering (only angleFromClientPoint,
-// while actively dragging, needs real pixels).
+// corner) to a fixed PIVOT point on the stage, at ANGLE degrees. The wrapper
+// is positioned at the pivot but sized 100%/100% (of .stage, its own
+// containing block) rather than 0/0 -- percentage widths on the <img> child
+// resolve against the WRAPPER's width, so a zero-size wrapper would force
+// the sprite to render at zero size (invisible) instead of opts.widthPct%
+// of the stage. pointer-events:none on the wrapper keeps its now-large
+// bounding box from intercepting drags meant for other sprites/buttons;
+// the <img> re-enables pointer-events itself via .drag-sprite when draggable.
 function rotatingSpriteHtml(opts) {
-    return '<div class="pivot-anchor" style="position:absolute; left:' + opts.pivotX + '%; top:' + opts.pivotY + '%; width:0; height:0;">' +
+    return '<div class="pivot-anchor" style="position:absolute; left:' + opts.pivotX + '%; top:' + opts.pivotY + '%; width:100%; height:100%; pointer-events:none;">' +
         '<img id="' + opts.id + '" class="' + (opts.extraClass || '') + '" src="' + opts.src + '" ' +
             'style="position:absolute; left:0; top:0; width:' + opts.widthPct + '%; ' +
             'transform-origin:' + opts.anchorX + '% ' + opts.anchorY + '%; ' +
