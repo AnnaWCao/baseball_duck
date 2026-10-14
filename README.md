@@ -6,9 +6,9 @@ star_farm (portrait, seed/vine theme), this study is **landscape** and uses
 a baseball theme: a duck predicts where a ball, launched from a slingshot,
 will land.
 
-Data is saved as a CSV downloaded to the device running the experiment, and
-optionally also pushed to OSF via jsPsych DataPipe (see "Data Pipe / OSF
-setup" below — this last part still needs to be set up manually).
+Data is uploaded to OSF via jsPsych DataPipe at the end of the session, and
+the ending page has an experimenter-tapped "Save data file" button for a
+local CSV copy (see "Data saving" below).
 
 ## Study Flow
 
@@ -34,7 +34,8 @@ Transition_2 (Training_bg.jpeg + Audio_11, next)
 Testing ×9 (shuffled order, no feedback shown — same UI as training_response
   but the trial ends the instant OK is pressed; true landing spot is never
   revealed)
-End: video CFL2_end (auto-advance) → data save → "Session complete"
+End: video CFL2_end (auto-advance) → OSF upload (max 20 s) → ending page
+  (OSF status + "Save data file" button)
 ```
 
 Trial numbering (`fam_4`, `fam_7`, `fam_9`, …) intentionally has gaps —
@@ -100,9 +101,16 @@ exact constants and how to re-measure them if the art changes.
    4 = exponential growth — same four formulas as star_farm, see
    `config/functions.js`).
 3. Click "Start Session" → hand the device to the child.
-4. At session end, a CSV downloads automatically. Filename is the random
+4. At session end, the ending page shows whether the OSF upload worked.
+   Tap **Save data file** (and Download, if Safari asks) for a local copy.
+   If the upload failed, tap **Retry OSF upload**. Filename is the random
    10-character subject ID, e.g. `aB3dE7fG2h.csv`.
 5. Reload the page (or navigate back to the URL) to start the next child.
+   Any session that never reached OSF is listed at the top of the startup
+   form, with Upload / Download / Delete buttons.
+
+iPad checklist: Low Power Mode off, Auto-Lock off (or long), normal (not
+Private) Safari tab, don't switch apps during a session.
 
 URL query params for quick testing/reruns: `?pid=1&age=6&fn=1`.
 
@@ -165,36 +173,40 @@ sprite's width, which is also set inline as `width:3%`) and the stage's
 aspect ratio, so if you resize the ball sprite, update `BALL_WIDTH_PCT` to
 match rather than just the inline `width:`.
 
-## Data Pipe / OSF setup (manual step)
+## Data saving
 
-`index.html` has a `PIPE_EXPERIMENT_ID` constant near the end of
-`runExperiment()`. The **local CSV download always happens**, regardless of
-whether this is set or whether the OSF upload succeeds — it's the very
-first thing that runs once the end video finishes, in its own instant
-trial, so a network hiccup or a misconfigured DataPipe experiment can never
-lose a session's data outright. (Earlier versions gated the local download
-behind "only if no pipe ID is set," which meant a silent OSF failure lost
-the data with no backup — fixed.) The OSF upload is a second, independent
-step after that.
+All of this lives at the top of `index.html`'s `<script>` (`PIPE_EXPERIMENT_ID`,
+`uploadToDataPipe`, `downloadCSV`, the localStorage backup helpers) and in the
+"Data save" section at the end of `runExperiment()`.
 
-To enable/troubleshoot OSF saving:
+1. **OSF upload.** After the end video, the data is POSTed straight to the
+   DataPipe API (`PIPE_EXPERIMENT_ID`), uncompressed, with one retry if no
+   reply comes back, and a hard 20 s limit — the study always moves on to the
+   ending page. The result is recorded in the data (`task == 'save_upload'`:
+   `upload_ok`, `upload_status`, `upload_message`, `upload_attempts`).
+   `@jspsych-contrib/plugin-pipe` is no longer used: its 0.6.0 release
+   gzip-compresses uploads, which Safari 16.4–16.x corrupts above ~35 KB
+   (WebKit bug 254021), and its request has no timeout.
+2. **Ending page.** Shows "Uploaded to OSF ✓" or the failure reason
+   (`timeout`, `network_error`, or DataPipe's error code such as
+   `DATA_COLLECTION_NOT_ACTIVE`). "Save data file" downloads the CSV — it's a
+   tap rather than automatic because iPad Safari blocks/prompts on downloads
+   that don't come from a tap. "Retry OSF upload" appears on failure.
+3. **Device backup.** After every trial the data so far is saved in the
+   browser's localStorage (`baseball_duck_backup_<subject_id>`), and removed
+   once the OSF upload succeeds. If the tab reloads mid-session or the upload
+   fails, the startup form lists the session for upload/download
+   (incomplete sessions save as `<subject_id>_partial.csv`).
 
-1. Go to https://pipe.jspsych.org/ and follow their setup — this links
-   *your own* OSF account and creates a DataPipe experiment tied to an OSF
-   project you own. This can't be done on your behalf; it needs your OSF
-   login.
-2. Create (or reuse) an OSF project for this study's data.
-3. Paste the resulting experiment ID into `PIPE_EXPERIMENT_ID` in
-   `index.html`.
-4. If a session completes but nothing shows up in the OSF project's data
-   component, check on the DataPipe dashboard: the experiment's **"Enable
-   data collection"** toggle must be on, the OSF Project ID must still be
-   linked, and the experiment ID in `index.html` must match exactly
-   (DataPipe fails the upload silently from the participant's point of view
-   if any of these are off — the local CSV is what saves you in that case).
+The `stimulus` column (each screen's full HTML) is dropped from all saved
+data: it was ~80% of the file for function 3.
 
-Every session still saves a CSV locally via the browser's download —
-verify the file before closing the tab.
+If OSF uploads fail, the ending page's reason tells you where to look. For
+DataPipe error codes, check the DataPipe dashboard: **"Enable data
+collection"** must be on, the OSF project must still be linked, no session
+limit reached, and the experiment ID in `index.html` must match. `timeout` /
+`network_error` point at the device's network (school Wi-Fi filters,
+captive portals, VPN/content blockers).
 
 ## Input Compatibility
 
@@ -233,7 +245,10 @@ baseball_duck/
 One row per trial. Columns of note:
 
 **Session-level** (same on every row): `subject_id`, `pid`, `age`,
-`function_number`.
+`function_number`, `user_agent`, `touch_points` (>0 on iPad — iPad Safari
+reports a Mac user agent), `screen_size`, `viewport_at_start`,
+`study_completion_timestamp`, `js_errors` (any script errors during the
+session).
 
 **Trial-level**: `task` (`intro`, `fam_1` through `fam_11` — with gaps, see
 above, `transition_1`, `training_response`, `training_feedback`,
@@ -242,6 +257,10 @@ above, `transition_1`, `training_response`, `training_feedback`,
 one), `response_pct` (duck's predicted landing spot, 0–100), `trial_index`,
 `canonical_index` (testing only — which item from `functions.js` was shown,
 before shuffling), `interacted`, `first_move_rt_ms`.
+
+Video rows add `video_autoplay_blocked` (the Play fallback button had to be
+shown) and `video_completed` (false = the video never finished and the
+trial's time limit ended it).
 
 Fam drag trials additionally record how the free sprite was left: functions
 1/2/4 (`buildAppleDragTrial`) record `apple_final_pct` (0–100 position along

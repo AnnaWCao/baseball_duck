@@ -7,7 +7,10 @@
 
     <script src="https://unpkg.com/jspsych@8.0.0"></script>
     <link href="https://unpkg.com/jspsych@8.0.0/css/jspsych.css" rel="stylesheet" type="text/css" />
-    <script src="https://unpkg.com/@jspsych-contrib/plugin-pipe"></script>
+    <!-- OSF upload no longer uses @jspsych-contrib/plugin-pipe: its 0.6.0
+         release gzip-compresses uploads, which Safari 16.4-16.x corrupts above
+         ~35 KB, and its request has no timeout. uploadToDataPipe() below talks
+         to the same DataPipe API directly, uncompressed, with a time limit. -->
 
     <script src="https://unpkg.com/@jspsych/plugin-html-button-response@2.1.0"></script>
     <script src="https://unpkg.com/@jspsych/plugin-video-button-response@2.1.1"></script>
@@ -28,7 +31,171 @@
 </body>
 <script>
 
-var jsPsych = initJsPsych({});
+// ============================================================
+// DIAGNOSTICS + DATA SAVING (shared by the session and the startup form's
+// recovery panel)
+// ============================================================
+
+// Any uncaught JS error / rejected promise is kept here and written into the
+// data (js_errors column) at save time, so a failed iPad session leaves a trace.
+window._jsErrors = [];
+function recordJsError(msg) {
+    if (window._jsErrors.length < 20) window._jsErrors.push(String(msg).slice(0, 300));
+}
+window.addEventListener('error', function(e) {
+    recordJsError((e.message || 'error') + ' @' + String(e.filename || '').split('/').pop() + ':' + (e.lineno || '?'));
+});
+window.addEventListener('unhandledrejection', function(e) {
+    recordJsError('unhandled rejection: ' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+});
+
+// DataPipe experiment linked to the OSF project (https://pipe.jspsych.org).
+const PIPE_EXPERIMENT_ID = '4fzLV6jNJmjL';
+const PIPE_URL = 'https://pipe.jspsych.org/api/data/';
+const UPLOAD_TIME_LIMIT_MS = 20000;  // total, including the one retry
+
+// Temporary per-session backup in this browser's localStorage, so a Safari
+// tab reload mid-session doesn't lose the data. Written after every trial,
+// removed once the OSF upload succeeds; otherwise the startup form offers it
+// for download/upload next time the page is opened.
+const BACKUP_PREFIX = 'baseball_duck_backup_';
+
+var jsPsych = initJsPsych({
+    on_data_update: function() { writeSessionBackup(false); }
+});
+
+// All saved data drops the `stimulus` column: it's each screen's full HTML
+// (~80% of the file for function 3), never analyzed, and it pushed function
+// 3's upload over Safari's compression bug threshold.
+function sessionRows() {
+    return jsPsych.data.get().ignore('stimulus').values();
+}
+
+function rowsToCsv(rows) {
+    if (!rows || rows.length === 0) return '';
+    const allKeys = new Set();
+    rows.forEach(row => Object.keys(row).forEach(k => allKeys.add(k)));
+    const keys = Array.from(allKeys);
+    const escape = (val) => {
+        if (val === null || val === undefined) return '';
+        const s = (typeof val === 'object') ? JSON.stringify(val) : String(val);
+        return (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r'))
+            ? '"' + s.replace(/"/g, '""') + '"'
+            : s;
+    };
+    return keys.map(escape).join(',') + '\n' +
+        rows.map(row => keys.map(k => escape(row[k])).join(',')).join('\n');
+}
+
+// One POST to DataPipe, uncompressed, aborted after timeoutMs.
+// Resolves {kind:'response', httpStatus, json} or {kind:'timeout'|'network_error', message}.
+function postToDataPipe(filename, csv, timeoutMs) {
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer;
+    var timeout = new Promise(function(resolve) {
+        timer = setTimeout(function() {
+            if (ctrl) ctrl.abort();
+            resolve({ kind: 'timeout', message: 'No reply from DataPipe within ' + Math.round(timeoutMs / 1000) + ' s' });
+        }, timeoutMs);
+    });
+    var request = fetch(PIPE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': '*/*' },
+        body: JSON.stringify({ experimentID: PIPE_EXPERIMENT_ID, filename: filename, data: csv }),
+        signal: ctrl ? ctrl.signal : undefined
+    }).then(function(res) {
+        return res.json()
+            .catch(function() { return { error: 'HTTP_' + res.status }; })
+            .then(function(json) { return { kind: 'response', httpStatus: res.status, json: json }; });
+    }).catch(function(err) {
+        return { kind: 'network_error', message: (err && err.message) || String(err) };
+    });
+    return Promise.race([request, timeout]).then(function(r) { clearTimeout(timer); return r; });
+}
+
+// Upload with one retry (only when there was no reply at all), capped at
+// UPLOAD_TIME_LIMIT_MS overall. Always resolves, never rejects:
+// {ok, status, message, attempts}. 201 = saved to OSF; 202 = DataPipe has the
+// data and will finish the OSF upload itself; FILE_EXISTS means an earlier
+// attempt already got through.
+function uploadToDataPipe(filename, csv) {
+    var started = Date.now();
+    function interpret(r, attempt) {
+        if (r.kind !== 'response') {
+            return { ok: false, status: r.kind, message: r.message, attempts: attempt };
+        }
+        var err = r.json && r.json.error;
+        if (!err && (r.httpStatus === 201 || r.httpStatus === 202 || r.httpStatus === 200)) {
+            return { ok: true, status: r.httpStatus === 202 ? 'queued' : 'saved',
+                     message: (r.json && r.json.message) || 'Success', attempts: attempt };
+        }
+        // Subject IDs are random, so a name clash means an earlier attempt
+        // (one that timed out on our side, or an earlier retry) got through.
+        if (err === 'FILE_EXISTS') {
+            return { ok: true, status: 'already_on_osf', message: 'This file is already on OSF', attempts: attempt };
+        }
+        return { ok: false, status: err || ('HTTP_' + r.httpStatus),
+                 message: (r.json && r.json.message) || '', attempts: attempt };
+    }
+    return postToDataPipe(filename, csv, UPLOAD_TIME_LIMIT_MS / 2).then(function(r1) {
+        var first = interpret(r1, 1);
+        var remaining = UPLOAD_TIME_LIMIT_MS - (Date.now() - started);
+        if (first.ok || r1.kind === 'response' || remaining < 3000) return first;
+        return postToDataPipe(filename, csv, remaining).then(function(r2) { return interpret(r2, 2); });
+    });
+}
+
+// Local CSV download. Must be called from a tap/click handler: iPad Safari
+// blocks or prompts on script-initiated downloads. The blob URL is kept alive
+// for 60 s -- revoking it right away (as before, 100 ms) makes Safari fail the
+// download with "WebKitBlobResource error 1" if its download prompt is still open.
+function downloadCSV(rows, filename) {
+    if (!rows || rows.length === 0) { console.warn('No data to save'); return false; }
+    const blob = new Blob([rowsToCsv(rows)], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename; a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 60000);
+    return true;
+}
+
+// ---- localStorage session backup ----
+window._session = null;  // {subject_id, pid, age, fnNum, filename, uploaded}
+
+function writeSessionBackup(complete) {
+    var s = window._session;
+    if (!s || s.uploaded) return;
+    try {
+        var prev = JSON.parse(localStorage.getItem(BACKUP_PREFIX + s.subject_id) || 'null');
+        localStorage.setItem(BACKUP_PREFIX + s.subject_id, JSON.stringify({
+            subject_id: s.subject_id, pid: s.pid, age: s.age, fnNum: s.fnNum,
+            complete: !!(complete || (prev && prev.complete)),
+            saved_at: new Date().toISOString(),
+            rows: sessionRows()
+        }));
+    } catch (e) { /* private mode / storage full -- backup is best-effort */ }
+}
+function clearSessionBackup(subjectId) {
+    try { localStorage.removeItem(BACKUP_PREFIX + subjectId); } catch (e) {}
+}
+function listSessionBackups() {
+    var out = [];
+    try {
+        for (var i = 0; i < localStorage.length; i++) {
+            var key = localStorage.key(i);
+            if (key && key.indexOf(BACKUP_PREFIX) === 0) {
+                var b = JSON.parse(localStorage.getItem(key) || 'null');
+                if (b && b.rows) out.push(b);
+            }
+        }
+    } catch (e) {}
+    return out.sort(function(a, b) { return a.saved_at < b.saved_at ? 1 : -1; });
+}
+function backupFilename(b) {
+    return b.subject_id + (b.complete ? '' : '_partial') + '.csv';
+}
 
 const FUNCTION_BY_NUMBER = {
     1: 'positive_linear',
@@ -184,6 +351,21 @@ function stageRectFromWindow() {
     return { left: (vw - width) / 2, top: (vh - height) / 2, width: width, height: height };
 }
 
+// The real on-screen .stage box when it exists, else the window estimate
+// above. The estimate uses window.innerWidth/innerHeight while the CSS sizes
+// .stage with dvw/dvh -- on iPad Safari those disagree whenever the toolbar
+// shows/hides or in Split View, which drifted the fn3 ball/slingshot and
+// drag angle. So stimulus functions use the estimate (no stage yet) and
+// on_load / drag handlers re-measure against the real box.
+function stageRect() {
+    var el = document.querySelector('.stage');
+    if (el) {
+        var r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) return r;
+    }
+    return stageRectFromWindow();
+}
+
 // Computes where a point at `angleDeg` and `radiusPct` (of stage WIDTH) from
 // a pivot (in % of stage) actually lands, in real pixels first (so the
 // stage's non-square aspect ratio doesn't warp the circle into an ellipse),
@@ -196,7 +378,7 @@ function stageRectFromWindow() {
 // slightly off the bar; see FN3_BALL_PERP_OFFSET.
 function arcPoint(pivotXPct, pivotYPct, radiusPct, angleDeg, perpOffsetPct) {
     perpOffsetPct = perpOffsetPct || 0;
-    var rect = stageRectFromWindow();
+    var rect = stageRect();
     var pivotXPx = (pivotXPct / 100) * rect.width;
     var pivotYPx = (pivotYPct / 100) * rect.height;
     var radiusPx = (radiusPct / 100) * rect.width;
@@ -211,7 +393,7 @@ function arcPoint(pivotXPct, pivotYPct, radiusPct, angleDeg, perpOffsetPct) {
 // the angle (deg, clamped to [SLING_MIN_ANGLE, SLING_MAX_ANGLE]) from the
 // pivot to that position. Used while dragging apple_slingshot.
 function angleFromClientPoint(pivotXPct, pivotYPct, clientX, clientY) {
-    var rect = stageRectFromWindow();
+    var rect = stageRect();
     var pivotScreenX = rect.left + (pivotXPct / 100) * rect.width;
     var pivotScreenY = rect.top  + (pivotYPct / 100) * rect.height;
     var dx = clientX - pivotScreenX;
@@ -242,12 +424,14 @@ function rotatingSpriteHtml(opts) {
 
 // URL query params for quick testing: ?pid=1&age=6&fn=1
 document.body.insertAdjacentHTML('beforeend', `
-    <div id="startup-form" style="max-width:min(900px, 92vw); margin:80px auto; padding:48px;
+    <div id="startup-form" style="max-width:min(900px, 92vw); margin:24px auto; padding:48px;
+                max-height:calc(100dvh - 48px); overflow-y:auto; -webkit-overflow-scrolling:touch; box-sizing:border-box;
                 background:white; border-radius:14px;
                 box-shadow:0 4px 14px rgba(0,0,0,0.12);
                 font-family:-apple-system,sans-serif;">
         <h2 style="font-size:30px; margin:0 0 8px;">Baseball Duck — Session Setup</h2>
         <p style="color:#666; font-size:18px; margin:0 0 20px;">Experimenter only. Hold the device in landscape.</p>
+        <div id="recovery-panel"></div>
 
         <div style="margin:24px 0;">
             <label style="display:block; font-weight:bold; font-size:20px; margin-bottom:8px;">Participant ID:</label>
@@ -282,6 +466,66 @@ document.body.insertAdjacentHTML('beforeend', `
         <div id="form-error" style="color:#e74c3c; margin-top:14px; font-size:16px;"></div>
     </div>
 `);
+
+// ---- Recovery panel: sessions whose OSF upload never succeeded ----
+// (tab reloaded mid-session, upload failed/timed out, etc.). Each backup can
+// be downloaded, uploaded to OSF (removed on success), or deleted.
+function renderRecoveryPanel() {
+    var panel = document.getElementById('recovery-panel');
+    if (!panel) return;
+    var backups = listSessionBackups();
+    if (backups.length === 0) { panel.innerHTML = ''; return; }
+    var btn = 'padding:10px 14px; font-size:17px; border:none; border-radius:8px; margin:6px 8px 0 0; cursor:pointer;';
+    panel.innerHTML =
+        '<div style="margin:0 0 24px; padding:20px; border:2px solid #e67e22; border-radius:10px; background:#fff8ef;">' +
+        '<div style="font-weight:bold; font-size:20px; margin-bottom:6px;">Unsaved sessions on this device</div>' +
+        '<div style="color:#666; font-size:15px; margin-bottom:10px;">These were not uploaded to OSF. Upload or download each one before deleting it.</div>' +
+        backups.map(function(b) {
+            return '<div style="padding:12px 0; border-top:1px solid #f0d9bf; font-size:17px;" data-subject="' + b.subject_id + '">' +
+                '<b>PID ' + String(b.pid).replace(/[<>&"]/g, '') + '</b> · function ' + b.fnNum +
+                ' · ' + b.rows.length + ' trials' + (b.complete ? ' (complete)' : ' (incomplete)') +
+                ' · ' + new Date(b.saved_at).toLocaleString() +
+                '<div class="recovery-status" style="font-size:15px; color:#555; margin-top:4px;"></div>' +
+                '<button data-act="upload" style="' + btn + 'background:#27ae60; color:white;">Upload to OSF</button>' +
+                '<button data-act="download" style="' + btn + 'background:#2980b9; color:white;">Download CSV</button>' +
+                '<button data-act="delete" style="' + btn + 'background:#ddd; color:#333;">Delete</button>' +
+            '</div>';
+        }).join('') + '</div>';
+
+    panel.querySelectorAll('[data-subject]').forEach(function(row) {
+        var b = backups.find(function(x) { return x.subject_id === row.dataset.subject; });
+        var status = row.querySelector('.recovery-status');
+        row.querySelector('[data-act="download"]').addEventListener('click', function() {
+            downloadCSV(b.rows, backupFilename(b));
+            status.textContent = 'Download started: ' + backupFilename(b) + ' (check Files › Downloads).';
+        });
+        row.querySelector('[data-act="upload"]').addEventListener('click', function(e) {
+            e.target.disabled = true;
+            status.textContent = 'Uploading…';
+            uploadToDataPipe(backupFilename(b), rowsToCsv(b.rows)).then(function(res) {
+                e.target.disabled = false;
+                if (res.ok) {
+                    clearSessionBackup(b.subject_id);
+                    status.textContent = 'Uploaded to OSF ✓';
+                    setTimeout(renderRecoveryPanel, 1500);
+                } else {
+                    status.textContent = 'Upload failed: ' + res.status + (res.message ? ' – ' + res.message : '');
+                }
+            });
+        });
+        var delBtn = row.querySelector('[data-act="delete"]');
+        delBtn.addEventListener('click', function() {
+            if (delBtn.dataset.armed) {
+                clearSessionBackup(b.subject_id);
+                renderRecoveryPanel();
+            } else {
+                delBtn.dataset.armed = '1';
+                delBtn.textContent = 'Tap again to delete';
+            }
+        });
+    });
+}
+renderRecoveryPanel();
 
 var params = new URLSearchParams(window.location.search);
 if (params.get('pid')) document.getElementById('pid-input').value      = params.get('pid');
@@ -331,7 +575,18 @@ function runExperiment(pid, age, fnNum) {
     const subject_id = jsPsych.randomization.randomID(10);
     const filename = `${subject_id}.csv`;
 
-    jsPsych.data.addProperties({ subject_id: subject_id, pid: pid, age: age, function_number: fnNum });
+    jsPsych.data.addProperties({
+        subject_id: subject_id, pid: pid, age: age, function_number: fnNum,
+        // Device info, to tell iPad sessions from computer ones. iPad Safari
+        // reports a Mac user agent by default, so touch_points (>0 on iPad,
+        // 0 on a Mac) is the reliable tell.
+        user_agent:   navigator.userAgent,
+        touch_points: navigator.maxTouchPoints || 0,
+        screen_size:  window.screen.width + 'x' + window.screen.height,
+        viewport_at_start: window.innerWidth + 'x' + window.innerHeight
+    });
+
+    window._session = { subject_id: subject_id, pid: pid, age: age, fnNum: fnNum, filename: filename, uploaded: false };
 
     // ---- Audio helpers (same pattern as star_farm) ----
     window._activeAudios = [];
@@ -462,17 +717,55 @@ function runExperiment(pid, age, fnNum) {
     }
 
     // ================================================================
-    // buildVideoTrial(src)
+    // buildVideoTrial(src, task, durationSec)
     // Plays a video full-screen in the stage frame; auto-advances when done.
+    // Two fallbacks so a video can never strand the session (there's no
+    // button to press): if it hasn't started ~2.5 s in (iPad autoplay blocked,
+    // e.g. Low Power Mode), a Play button appears for the experimenter; and
+    // the trial ends on its own durationSec + 20 s after it starts regardless.
+    // durationSec values are the clips' measured lengths -- update them if a
+    // video is replaced with a longer one.
     // ================================================================
-    function buildVideoTrial(src, task) {
+    function buildVideoTrial(src, task, durationSec) {
         return {
             type: jsPsychVideoButtonResponse,
             stimulus: [src],
             choices: [],
             trial_ends_after_video: true,
             response_allowed_while_playing: false,
-            data: { task: task }
+            trial_duration: Math.round((durationSec + 20) * 1000),
+            data: { task: task },
+            on_load: function() {
+                var video = document.getElementById('jspsych-video-button-response-stimulus');
+                window._videoTrialInfo = { autoplayBlocked: false, ended: false };
+                if (!video) return;
+                video.setAttribute('playsinline', '');
+                video.addEventListener('ended', function() {
+                    if (window._videoTrialInfo) window._videoTrialInfo.ended = true;
+                });
+                jsPsych.pluginAPI.setTimeout(function() {
+                    if (!video.paused || video.ended || video.currentTime > 0.1) return;
+                    window._videoTrialInfo.autoplayBlocked = true;
+                    var playBtn = document.createElement('button');
+                    playBtn.textContent = '▶ Play';
+                    playBtn.style.cssText = 'position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); ' +
+                        'z-index:1000; padding:24px 48px; font-size:36px; font-weight:bold; border:none; ' +
+                        'border-radius:16px; background:#2980b9; color:white;';
+                    playBtn.addEventListener('click', function() {
+                        video.play().catch(function(e) { recordJsError('video play: ' + e.message); });
+                        playBtn.remove();
+                    });
+                    video.parentElement.appendChild(playBtn);
+                }, 2500);
+            },
+            on_finish: function(data) {
+                if (window._videoTrialInfo) {
+                    data.video_autoplay_blocked = window._videoTrialInfo.autoplayBlocked;
+                    // false = the trial_duration fallback ended it, not the video.
+                    data.video_completed = window._videoTrialInfo.ended;
+                    window._videoTrialInfo = null;
+                }
+            }
         };
     }
 
@@ -854,6 +1147,13 @@ function runExperiment(pid, age, fnNum) {
                 var duck  = document.getElementById('duck-sprite');
                 var okBtn = document.getElementById('ok-btn');
 
+                // Re-place the ball against the real .stage box (the stimulus
+                // HTML could only use the window-size estimate).
+                var ball    = document.getElementById('ball-sprite');
+                var ballPos = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle, FN3_BALL_PERP_OFFSET);
+                ball.style.left = ballPos.xPct + '%';
+                ball.style.top  = ballPos.yPct + '%';
+
                 var hasInteracted = false;
                 var currentXPct   = DUCK_DEFAULT_X;
                 var firstMoveTs   = null;
@@ -957,6 +1257,10 @@ function runExperiment(pid, age, fnNum) {
                 anchorBtnGroupInStage();
                 var ball      = document.getElementById('ball-sprite');
                 var ballStart = arcPoint(FN3_PIVOT_X, FN3_PIVOT_Y, FN3_RADIUS, angle, FN3_BALL_PERP_OFFSET);
+                // Snap to the real-stage position now, not 400 ms later when
+                // the roll starts (avoids a visible jump).
+                ball.style.left = ballStart.xPct + '%';
+                ball.style.top  = ballStart.yPct + '%';
 
                 function revealNext() {
                     setTimeout(function() {
@@ -1160,7 +1464,7 @@ function runExperiment(pid, age, fnNum) {
         // ============================================================
         var TRAINING_BG_FN3 = 'assets/images/Training_bg_fn3.jpeg';
 
-        timeline.push(buildVideoTrial('assets/videos/CFL2_intro1.mp4', 'fam_1'));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro1.mp4', 'fam_1', 14.4));
         timeline.push(buildAudioGatedTrial({
             background: 'assets/images/Intro_5.jpeg', audio: 'assets/audio/Audio_1.m4a', task: 'fam_2',
             autoAdvance: true
@@ -1168,7 +1472,7 @@ function runExperiment(pid, age, fnNum) {
         timeline.push(buildRotatingDragTrial({
             background: 'assets/images/Intro_6.jpeg', task: 'fam_3', startAngle: FAM3_START_ANGLE
         }));
-        timeline.push(buildVideoTrial('assets/videos/CFL2_intro6_7.mp4', 'fam_4'));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro6_7.mp4', 'fam_4', 21.0));
         timeline.push(buildAudioGatedTrial({
             background: 'assets/images/Intro_7.jpeg', audio: 'assets/audio/Audio_12.m4a', task: 'fam_5'
         }));
@@ -1178,14 +1482,14 @@ function runExperiment(pid, age, fnNum) {
         timeline.push(buildRotatingDragTrial({
             background: 'assets/images/Intro_9.jpeg', task: 'fam_7', startAngle: FAM7_START_ANGLE
         }));
-        timeline.push(buildVideoTrial('assets/videos/CFL2_intro8_9.mp4', 'fam_8'));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro8_9.mp4', 'fam_8', 28.7));
         timeline.push(buildAudioGatedTrial({
             background: 'assets/images/Intro_10.jpeg', audio: 'assets/audio/Audio_13.m4a', task: 'fam_9'
         }));
         timeline.push(buildRotatingDragTrial({
             background: 'assets/images/Intro_11.jpeg', task: 'fam_10', startAngle: FAM10_START_ANGLE
         }));
-        timeline.push(buildVideoTrial('assets/videos/CFL2_intro10_11.mp4', 'fam_11'));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro10_11.mp4', 'fam_11', 20.0));
 
         timeline.push(buildAudioGatedTrial({
             background: 'assets/images/Transition_bg_fn3.jpeg', audio: 'assets/audio/Audio_3.m4a', task: 'transition_1'
@@ -1258,7 +1562,7 @@ function runExperiment(pid, age, fnNum) {
         // ============================================================
         var TRAINING_BG = 'assets/images/Training_bg.jpeg';
 
-        timeline.push(buildVideoTrial('assets/videos/CFL2_intro1.mp4', 'fam_1'));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro1.mp4', 'fam_1', 14.4));
         timeline.push(buildAudioGatedTrial({
             background: 'assets/images/Intro_1.jpeg', audio: 'assets/audio/Audio_1.m4a', task: 'fam_2',
             autoAdvance: true
@@ -1267,7 +1571,7 @@ function runExperiment(pid, age, fnNum) {
         // Fam_4 replaces the old Fam_4/5/6 (miss video, second apple drag, catch
         // video) with a single combined clip showing both outcomes; there's now
         // only one apple-drag attempt per background instead of two.
-        timeline.push(buildVideoTrial('assets/videos/CFL2_intro2_3.mp4', 'fam_4'));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro2_3.mp4', 'fam_4', 21.0));
         timeline.push(buildAudioGatedTrial({
             background: 'assets/images/Intro_3.jpeg', audio: 'assets/audio/Audio_2.m4a', task: 'fam_7',
             autoAdvance: true
@@ -1275,7 +1579,7 @@ function runExperiment(pid, age, fnNum) {
         timeline.push(buildAppleDragTrial({ background: 'assets/images/Intro_4.jpeg', task: 'fam_8' }));
         // Fam_9 replaces the old Fam_9/10/11 (miss video, second apple drag,
         // catch video) the same way.
-        timeline.push(buildVideoTrial('assets/videos/CFL2_intro4_5.mp4', 'fam_9'));
+        timeline.push(buildVideoTrial('assets/videos/CFL2_intro4_5.mp4', 'fam_9', 22.8));
 
         timeline.push(buildAudioGatedTrial({
             background: 'assets/images/Transition_bg.jpeg', audio: 'assets/audio/Audio_3.m4a', task: 'transition_1'
@@ -1356,47 +1660,116 @@ function runExperiment(pid, age, fnNum) {
     // ================================================================
     // ENDING
     // ================================================================
-    timeline.push(buildVideoTrial('assets/videos/CFL2_end.mp4', 'end'));
+    timeline.push(buildVideoTrial('assets/videos/CFL2_end.mp4', 'end', 15.4));
 
     // ---- Data save ----
-    // Set PIPE_EXPERIMENT_ID once an OSF project + jsPsych DataPipe experiment
-    // are created at https://pipe.jspsych.org (this requires linking your own
-    // OSF account -- it can't be done on your behalf).
-    var PIPE_EXPERIMENT_ID = '4fzLV6jNJmjL';
+    // 1) OSF upload via DataPipe (uploadToDataPipe, top of the script):
+    //    uncompressed, one retry, hard 20 s limit -- the study ALWAYS moves on
+    //    to the ending page, and the result is recorded in the data
+    //    (task 'save_upload': upload_ok / upload_status / upload_message).
+    // 2) Ending page: shows whether OSF worked and has an experimenter-tapped
+    //    "Save data file" button for the local CSV (iPad Safari only allows
+    //    downloads reliably from a tap), plus "Retry OSF upload" on failure.
+    // 3) Until OSF succeeds, the session stays backed up in this browser's
+    //    localStorage and appears on the startup form for recovery.
+    window._uploadResult = null;
 
-    // Local CSV download is UNCONDITIONAL and happens FIRST, in its own
-    // near-instant trial (trial_duration ends it automatically -- no button,
-    // no dependency on anything after it). This used to be gated behind
-    // "only if no pipe ID is set", which meant a silent OSF upload failure
-    // (wrong/expired ID, DataPipe collection disabled, network hiccup) lost
-    // the session's data entirely with no local backup. Now every session
-    // gets a local file no matter what the OSF step below does.
     timeline.push({
         type: jsPsychHtmlButtonResponse,
         stimulus: '<div style="padding:60px;text-align:center;font-size:28px;">Saving your data…</div>',
         choices: [],
-        trial_duration: 50,
+        data: { task: 'save_upload' },
         on_load: function() {
-            jsPsych.data.addProperties({ study_completion_timestamp: new Date().toISOString() });
-            downloadCSV(jsPsych.data.get().values(), filename);
+            jsPsych.data.addProperties({
+                study_completion_timestamp: new Date().toISOString(),
+                js_errors: window._jsErrors.length ? window._jsErrors.join(' | ') : null
+            });
+            writeSessionBackup(true);
+
+            var finished = false;
+            function finish(result) {
+                if (finished) return;
+                finished = true;
+                window._uploadResult = result;
+                if (result.ok) {
+                    window._session.uploaded = true;
+                    clearSessionBackup(subject_id);
+                }
+                jsPsych.finishTrial({
+                    upload_ok: result.ok, upload_status: result.status,
+                    upload_message: result.message || null, upload_attempts: result.attempts || null
+                });
+            }
+            uploadToDataPipe(filename, rowsToCsv(sessionRows())).then(finish, function(e) {
+                finish({ ok: false, status: 'script_error', message: (e && e.message) || String(e), attempts: 0 });
+            });
+            // Belt and braces: never wait longer than the limit + 2 s.
+            setTimeout(function() {
+                finish({ ok: false, status: 'timeout', message: 'Gave up waiting for DataPipe', attempts: null });
+            }, UPLOAD_TIME_LIMIT_MS + 2000);
         }
     });
 
-    if (PIPE_EXPERIMENT_ID) {
-        timeline.push({
-            type: jsPsychPipe,
-            action: 'save',
-            experiment_id: PIPE_EXPERIMENT_ID,
-            filename: filename,
-            data_string: () => jsPsych.data.get().csv()
-        });
-    }
-
+    // Ending page. No choices: it stays up until the page is reloaded for the
+    // next child, so the experimenter always gets a chance to tap Save.
     timeline.push({
         type: jsPsychHtmlButtonResponse,
-        stimulus: '<div style="padding:60px;text-align:center;font-size:32px;">' +
-                  '✓ Session complete!<br><br>Data has been saved.</div>',
-        choices: ['Done']
+        stimulus: function() {
+            var btn = 'display:block; width:100%; padding:20px; font-size:24px; font-weight:bold; border:none; ' +
+                      'border-radius:10px; margin-top:16px; cursor:pointer; color:white;';
+            return '<div style="max-width:min(700px, 92vw); margin:60px auto; text-align:center; ' +
+                        'font-family:-apple-system,sans-serif;">' +
+                    '<div style="font-size:34px; font-weight:bold; margin-bottom:24px;">✓ Session complete!</div>' +
+                    '<div id="osf-status" style="font-size:22px; margin-bottom:8px;"></div>' +
+                    '<div style="font-size:16px; color:#666;">Experimenter: tap Save data file and confirm the download before reloading.</div>' +
+                    '<button id="save-csv-btn" style="' + btn + 'background:#2980b9;">Save data file</button>' +
+                    '<div id="save-csv-status" style="font-size:17px; color:#555; margin-top:10px;"></div>' +
+                    '<button id="retry-osf-btn" style="' + btn + 'background:#27ae60; display:none;">Retry OSF upload</button>' +
+                '</div>';
+        },
+        choices: [],
+        data: { task: 'ending_page' },
+        on_load: function() {
+            var osfStatus = document.getElementById('osf-status');
+            var retryBtn  = document.getElementById('retry-osf-btn');
+
+            function showUploadResult(r) {
+                if (r && r.ok) {
+                    osfStatus.innerHTML = '<span style="color:#27ae60;">Uploaded to OSF ✓</span>' +
+                        (r.status === 'queued' ? '<br><span style="font-size:16px;color:#666;">(DataPipe received it and will finish the OSF upload)</span>' : '');
+                    retryBtn.style.display = 'none';
+                } else {
+                    osfStatus.innerHTML = '<span style="color:#c0392b;">OSF upload failed: ' +
+                        ((r && r.status) || 'unknown') + '</span>' +
+                        (r && r.message ? '<br><span style="font-size:16px;color:#666;">' +
+                            String(r.message).replace(/[<>&]/g, '') + '</span>' : '') +
+                        '<br><span style="font-size:16px;color:#666;">Save the data file below. The data also stays on this device until it reaches OSF.</span>';
+                    retryBtn.style.display = 'block';
+                }
+            }
+            showUploadResult(window._uploadResult);
+
+            document.getElementById('save-csv-btn').addEventListener('click', function() {
+                downloadCSV(sessionRows(), filename);
+                document.getElementById('save-csv-status').textContent =
+                    'Download started: ' + filename + '. On iPad, tap Download if asked, then check Files › Downloads.';
+            });
+
+            retryBtn.addEventListener('click', function() {
+                retryBtn.disabled = true;
+                retryBtn.textContent = 'Uploading…';
+                uploadToDataPipe(filename, rowsToCsv(sessionRows())).then(function(r) {
+                    retryBtn.disabled = false;
+                    retryBtn.textContent = 'Retry OSF upload';
+                    window._uploadResult = r;
+                    if (r.ok) {
+                        window._session.uploaded = true;
+                        clearSessionBackup(subject_id);
+                    }
+                    showUploadResult(r);
+                });
+            });
+        }
     });
 
 
@@ -1404,32 +1777,5 @@ function runExperiment(pid, age, fnNum) {
 }
 
 
-// ---- CSV download helper (local backup / fallback when no pipe ID is set) ----
-function downloadCSV(rows, filename) {
-    if (!rows || rows.length === 0) { console.warn('No data to save'); return; }
-
-    const allKeys = new Set();
-    rows.forEach(row => Object.keys(row).forEach(k => allKeys.add(k)));
-    const keys = Array.from(allKeys);
-
-    const escape = (val) => {
-        if (val === null || val === undefined) return '';
-        const s = String(val);
-        return (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r'))
-            ? '"' + s.replace(/"/g, '""') + '"'
-            : s;
-    };
-
-    const csv = keys.map(escape).join(',') + '\n' +
-        rows.map(row => keys.map(k => escape(row[k])).join(',')).join('\n');
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url; a.download = filename; a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-}
 </script>
 </html>
